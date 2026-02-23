@@ -1,0 +1,13 @@
+{
+  "name": "Daily Flow Diary",
+  "short_name": "Daily Diary",
+  "description": "날짜별 To-do와 내가 한 일을 관리하는 iPhone 웹앱형 다이어리",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f7f8ff",
+  "theme_color": "#eff0ff",
+  "lang": "ko",
+  "prefer_related_applications": false
+}

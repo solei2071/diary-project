@@ -1,0 +1,427 @@
+/*
+ * globals.css — 전역 스타일시트
+ *
+ * - @tailwind: Tailwind CSS의 base/components/utilities 레이어 포함
+ * - :root: CSS 변수로 디자인 토큰 정의 (테마 변경 용이)
+ */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Notion-inspired Design Tokens ───────────────────── */
+/* CSS 변수: 프로젝트 전체에서 var(--변수명)으로 재사용 */
+:root {
+  /* 배경색 */
+  --bg: #ffffff;
+  --bg-secondary: #f7f6f3;
+  --bg-hover: rgba(55, 53, 47, 0.06);
+  --bg-selected: rgba(35, 131, 226, 0.08);
+
+  /* Text */
+  --ink: #37352f;
+  --ink-light: #73726e;
+  --muted: #9b9a97;
+
+  /* Border */
+  --border: rgba(55, 53, 47, 0.09);
+  --border-strong: rgba(55, 53, 47, 0.18);
+
+  /* Brand */
+  --primary: #2383e2;
+  --primary-hover: #1a6fc4;
+  --danger: #e03e3e;
+  --danger-bg: #fdecea;
+
+  /* Radius */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Safe area: 노치/홈 인디케이터 등 기기 영역 안전 여백 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/* ─── Base Reset ────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100dvh;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  padding: var(--safe-top) var(--safe-right) 0 var(--safe-left);
+}
+
+/* ─── Shell ─────────────────────────────────────────────── */
+.notion-shell {
+  min-height: 100dvh;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 max(1.5rem, var(--safe-left)) max(2rem, var(--safe-bottom))
+    max(1.5rem, var(--safe-right));
+}
+
+@media (min-width: 768px) {
+  .notion-shell {
+    max-width: 900px;
+    padding-inline: 3rem;
+  }
+}
+
+@media (min-width: 1100px) {
+  .notion-shell {
+    max-width: 1100px;
+  }
+}
+
+/* Legacy shell support */
+.ios-shell {
+  min-height: 100dvh;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 max(1.5rem, var(--safe-left)) max(2rem, var(--safe-bottom))
+    max(1.5rem, var(--safe-right));
+}
+
+@media (min-width: 768px) {
+  .ios-shell {
+    max-width: 900px;
+    padding-inline: 3rem;
+  }
+}
+
+/* ─── Notion Cards ──────────────────────────────────────── */
+
+/* 섹션 구분 카드 (Notion의 블록 스타일) */
+.n-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem;
+}
+
+/* 헤더 / 페이지 타이틀 영역 */
+.n-page-header {
+  padding: 2rem 0 1.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+/* 인라인 섹션 구분선 */
+.n-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 1rem 0;
+}
+
+/* ─── Typography ────────────────────────────────────────── */
+.n-title {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.n-h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.n-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.n-body {
+  font-size: 0.9rem;
+  color: var(--ink-light);
+  line-height: 1.6;
+}
+
+/* ─── Buttons ───────────────────────────────────────────── */
+
+/* Primary — Notion 스타일 파란 버튼 */
+.n-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #fff;
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.n-btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.n-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Ghost — Notion의 텍스트 버튼 */
+.n-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ink-light);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+  white-space: nowrap;
+}
+
+.n-btn-ghost:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+/* Danger ghost */
+.n-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--danger);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.n-btn-danger:hover {
+  background: var(--danger-bg);
+}
+
+/* ─── Inputs ────────────────────────────────────────────── */
+.n-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+}
+
+.n-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(35, 131, 226, 0.2);
+}
+
+.n-input::placeholder {
+  color: var(--muted);
+}
+
+.n-textarea {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  resize: vertical;
+  line-height: 1.7;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.n-textarea:focus {
+  background: var(--bg);
+  border-color: var(--border-strong);
+}
+
+.n-textarea::placeholder {
+  color: var(--muted);
+}
+
+/* ─── List / Row ────────────────────────────────────────── */
+
+/* Notion 체크박스 행 */
+.n-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: background 0.1s ease;
+}
+
+.n-row:hover {
+  background: var(--bg-hover);
+}
+
+.n-row--selected {
+  background: var(--bg-selected);
+}
+
+/* ─── Calendar ──────────────────────────────────────────── */
+.n-calendar-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.82rem;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.n-calendar-day:hover {
+  background: var(--bg-hover);
+}
+
+.n-calendar-day--today {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.n-calendar-day--selected {
+  background: var(--ink);
+  color: #fff;
+  font-weight: 600;
+}
+
+.n-calendar-day--selected:hover {
+  background: #1a1916;
+  color: #fff;
+}
+
+/* ─── Badge / Tag ───────────────────────────────────────── */
+.n-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--ink-light);
+  border: 1px solid var(--border);
+}
+
+.n-tag--blue {
+  background: #e8f1fb;
+  color: #1d5fa0;
+  border-color: #c9ddf5;
+}
+
+.n-tag--green {
+  background: #e6f4ea;
+  color: #1f6b3b;
+  border-color: #c3e6cb;
+}
+
+/* ─── Misc Utilities ────────────────────────────────────── */
+.ios-safe-offset-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Notion의 빈 상태 영역 */
+.n-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+input,
+textarea,
+button,
+label {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+input,
+textarea {
+  font-size: 16px;
+}
+
+/* ─── Animation ─────────────────────────────────────────── */
+.fade-in {
+  animation: fadeIn 0.2s ease-out both;
+}
+
+.fade-up {
+  animation: fadeUp 0.25s ease-out both;
+}
+
+.card-enter {
+  animation: fadeUp 0.25s ease-out both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─── Scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+}
