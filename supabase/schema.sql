@@ -40,10 +40,17 @@ create table if not exists public.daily_activities (
   emoji text not null,
   label text not null,
   hours numeric not null default 0,
+  start_time text not null default '00:00',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, activity_date, emoji, label)
 );
+
+alter table public.daily_activities
+  add column if not exists start_time text not null default '00:00';
+
+alter table public.daily_activities
+  add column if not exists end_time text not null default '00:00';
 
 create index if not exists idx_daily_activities_user_date
 on public.daily_activities (user_id, activity_date);

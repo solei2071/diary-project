@@ -7,7 +7,7 @@
 "use client";
 
 import { type FormEvent, useState } from "react";
-import { MailCheck } from "lucide-react";
+import { Mail, MailCheck, Send } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 /** Props 타입 — optional 속성으로 다양한 사용처 대응 */
@@ -90,30 +90,46 @@ export default function AuthPanel({
           </div>
           <h1 className="text-2xl font-black tracking-tight text-ink">Daily Flow Diary</h1>
         </div>
-        <p className="mb-5 text-sm leading-6 text-slate-700">
+        <p className="mb-6 text-sm leading-6 text-slate-600">
           {description ??
             (mode === "signup"
               ? "회원가입용 인증 메일을 보내드려요."
               : "날짜별 To-do와 회고를 기록하고, 필요할 때만 안전하게 저장할 수 있어요.")}
         </p>
-        <label className="mb-2 block text-sm font-semibold text-ink">
+
+        <label className="mb-3 block text-sm font-semibold text-[var(--ink)]">
           이메일 주소
         </label>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            type="email"
-            autoComplete="email"
-            className="input-field"
-            placeholder="you@example.com"
-          />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch">
+          <div className="relative flex-1">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted)] pointer-events-none">
+              <Mail className="h-5 w-5" />
+            </span>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              autoComplete="email"
+              className="n-input w-full pl-12 pr-4 py-3.5 text-base rounded-xl placeholder:text-[var(--muted)]"
+              placeholder="예: hello@example.com"
+            />
+          </div>
           <button
             type="submit"
             disabled={isLoading}
-            className="btn-primary px-5 py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-70 sm:w-40"
+            className="n-btn-primary shrink-0 flex items-center justify-center gap-2 px-6 py-3.5 text-base font-semibold rounded-xl disabled:cursor-not-allowed disabled:opacity-60 min-w-[140px] sm:min-w-[160px]"
           >
-            {isLoading ? "전송 중..." : submitLabel}
+            {isLoading ? (
+              <>
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                전송 중...
+              </>
+            ) : (
+              <>
+                <Send className="h-4 w-4" />
+                {submitLabel}
+              </>
+            )}
           </button>
         </div>
         {error && <p className="mt-3 text-sm font-semibold text-red-600">{error}</p>}

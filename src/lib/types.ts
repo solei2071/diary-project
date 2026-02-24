@@ -38,6 +38,8 @@ export type DailyActivityRow = {
   emoji: string;
   label: string;
   hours: number;
+  start_time?: string;
+  end_time?: string;
   created_at: string;
   updated_at: string;
 };
