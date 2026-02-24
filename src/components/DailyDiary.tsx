@@ -589,6 +589,12 @@ export default function DailyDiary({ session, onRequestAuth }: Props) {
     return formatMinutesToClock(normalizedMinutes);
   };
 
+  const formatActivityTimeWindow = (activity: UiActivity) => {
+    const start = formatStartTime(activity.startTime ?? "00:00");
+    const end = activity.endTime ? formatStartTime(activity.endTime) : calculateEndTimeFromHours(start, activity.hours);
+    return end ? `${start} - ${end}` : start;
+  };
+
 /** 같은 이모지의 여러 행을 합산해 하나의 UiActivity로 */
 const normalizeActivities = (rows: DailyActivityRow[]) =>
     Object.values(
@@ -683,6 +689,36 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
         .sort((a, b) => b.hours - a.hours || a.emoji.localeCompare(b.emoji)),
     [displayedDays, monthActivitiesByDate]
   );
+
+  /** 각 이모지별로 가장 많은 시간을 기록한 날 (M/D 형식) */
+  const topDayByEmoji = useMemo(() => {
+    const result: { emoji: string; date: string; hours: number }[] = [];
+    const emojiSet = new Set<string>();
+    displayedDays.forEach((day) => {
+      (monthActivitiesByDate[day] ?? []).forEach((a) => emojiSet.add(a.emoji));
+    });
+    emojiSet.forEach((emoji) => {
+      let bestDate = "";
+      let bestHours = 0;
+      displayedDays.forEach((day) => {
+        const activities = monthActivitiesByDate[day] ?? [];
+        const item = activities.find((a) => a.emoji === emoji);
+        const hours = item ? Number(item.hours) || 0 : 0;
+        if (hours > bestHours) {
+          bestHours = hours;
+          bestDate = day;
+        }
+      });
+      if (bestDate && bestHours > 0) {
+        result.push({ emoji, date: bestDate, hours: bestHours });
+      }
+    });
+    return result.sort((a, b) => {
+      const aIdx = summaryActivities.findIndex((s) => s.emoji === a.emoji);
+      const bIdx = summaryActivities.findIndex((s) => s.emoji === b.emoji);
+      return aIdx - bIdx;
+    });
+  }, [displayedDays, monthActivitiesByDate, summaryActivities]);
 
   const setDashboardViewModeAndSave = (mode: "week" | "month") => {
     setDashboardViewMode(mode);
@@ -1409,11 +1445,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     <div
                       key={`${activity.emoji}-${activity.id ?? "no-id"}`}
                       className="min-w-0 grid items-start gap-2 text-xs leading-5 text-[var(--ink)]"
-                      style={{ gridTemplateColumns: "1.25rem 3.5rem 3.5rem minmax(0, 1fr)" }}
+                      style={{ gridTemplateColumns: "1.25rem 3.5rem 6rem minmax(0, 1fr)" }}
                     >
                       <span className="row-span-1 w-5 text-base leading-5">{activity.emoji}</span>
                       <span className="row-span-1 w-14 shrink-0 whitespace-nowrap text-xs leading-5 text-[var(--ink)]">{formatHoursLabel(activity.hours)}</span>
-                      <span className="row-span-1 text-xs leading-5 text-[var(--muted)]">[{activity.startTime ?? "00:00"}]</span>
+                      <span className="row-span-1 w-24 shrink-0 whitespace-nowrap text-xs leading-5 text-[var(--muted)]">[{formatActivityTimeWindow(activity)}]</span>
                       {activity.label?.trim() ? (
                         <span className="col-span-1 min-w-0 break-words text-xs leading-5 text-[var(--muted)]">- {activity.label}</span>
                       ) : null}
@@ -1508,7 +1544,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 </button>
                 {isLoadingTodos && <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--muted)]" />}
               </div>
-              {todoError && <p className="px-3 py-2 text-xs text-red-500">{todoError}</p>}
+              {todoError && <p className="px-3 py-2 text-xs text-[var(--danger)]">{todoError}</p>}
               {isAddingTodo ? (
                 <div className="px-3 py-3">
                   <div className="flex gap-2">
@@ -1642,7 +1678,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 </div>
               )}
 
-              {activityError && <p className="px-3 py-2 text-xs text-red-500">{activityError}</p>}
+              {activityError && <p className="px-3 py-2 text-xs text-[var(--danger)]">{activityError}</p>}
               <div className="grid divide-y divide-[var(--border)]">
 
                 {/* Quick emoji buttons */}
@@ -1819,7 +1855,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 )}
                 {activityContextMenu ? (
                   <div
-                    className="fixed z-50 min-w-[130px] rounded-md border border-[var(--border)] bg-white p-1 shadow-lg dark:bg-slate-800"
+                    className="fixed z-50 min-w-[130px] rounded-md border border-[var(--border)] bg-[var(--bg)] p-1 shadow-lg"
                     style={{ left: activityContextMenu.x, top: activityContextMenu.y }}
                     onClick={(event) => event.stopPropagation()}
                     onContextMenu={(event) => event.preventDefault()}
@@ -1859,7 +1895,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               <div className="flex items-center border-b border-[var(--border)] px-3 py-3">
                 <span className="n-h2">Notes</span>
               </div>
-              {journalError && <p className="px-3 py-2 text-xs text-red-500">{journalError}</p>}
+              {journalError && <p className="px-3 py-2 text-xs text-[var(--danger)]">{journalError}</p>}
               <div className="divide-y divide-[var(--border)]">
                 <div className="px-3 py-3">
                   <textarea
@@ -1954,7 +1990,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   </button>
                 </div>
               </div>
-              {monthError && <p className="px-3 pb-2 text-xs text-red-500">{monthError}</p>}
+              {monthError && <p className="px-3 pb-2 text-xs text-[var(--danger)]">{monthError}</p>}
               <div className="px-3 pb-3 max-h-[640px] overflow-y-auto">
                 <div className="grid gap-3">
                   {displayedDays.map((day) => {
@@ -2005,11 +2041,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                                 <div
                                   key={`${day}-${activity.emoji}`}
                                   className="min-w-0 grid items-start gap-2 text-[11px] leading-5 text-[var(--ink)]"
-                                  style={{ gridTemplateColumns: "1.25rem 3.5rem 3.5rem minmax(0, 1fr)" }}
+                                  style={{ gridTemplateColumns: "1.25rem 3.5rem 6rem minmax(0, 1fr)" }}
                                 >
                                   <span className="w-5 text-base leading-5">{activity.emoji}</span>
                                   <span className="w-14 shrink-0 whitespace-nowrap text-[11px] leading-5">{formatHoursLabel(activity.hours)}</span>
-                                  <span className="w-14 text-[11px] leading-5 text-[var(--muted)]">[{activity.startTime ?? "00:00"}]</span>
+                                  <span className="w-24 text-[11px] leading-5 text-[var(--muted)]">[{formatActivityTimeWindow(activity)}]</span>
                                 {activity.label?.trim() ? (
                                     <span className="min-w-0 break-words text-[11px] leading-5 text-[var(--muted)]">{`- ${activity.label}`}</span>
                                   ) : (
@@ -2063,6 +2099,32 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   </div>
                 )}
               </div>
+              {topDayByEmoji.length > 0 && (
+                <>
+                  <div className="n-divider mx-3" />
+                  <div className="px-3 py-3">
+                    <p className="mb-2 text-xs leading-5 font-medium text-[var(--ink)]">
+                      {dashboardViewMode === "week" ? "Most active day (week)" : "Most active day (month)"}
+                    </p>
+                    <div className="grid gap-1.5">
+                      {topDayByEmoji.map((item) => {
+                        const d = new Date(`${item.date}T00:00:00`);
+                        const label = `${d.getMonth() + 1}/${d.getDate()}`;
+                        return (
+                          <div
+                            key={item.emoji}
+                            className="flex items-center gap-2 text-[11px] leading-5"
+                          >
+                            <span className="text-base">{item.emoji}</span>
+                            <span className="text-[var(--ink)]">{label}</span>
+                            <span className="text-[var(--muted)]">({formatHoursLabel(item.hours)})</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
                   </div>
           </section>
 
