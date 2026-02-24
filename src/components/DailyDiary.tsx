@@ -11,7 +11,7 @@
  */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent, MouseEvent } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Palette, Save, Settings } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
@@ -348,6 +348,8 @@ const normalizeClockValue = (value?: string) => {
   return `${normalizedHour}:${normalizedMinute}`;
 };
 
+const formatStartTime = (value?: string) => normalizeClockValue(value);
+
 const normalizeActivitySource = (row: DailyActivityRow): UiActivity => ({
   id: row.id,
   emoji: row.emoji ?? "",
@@ -495,8 +497,6 @@ export default function DailyDiary({ session, onRequestAuth }: Props) {
   const today = toLocalDateString(new Date());
 
   const calendarDays = useMemo(() => getMonthDaysForCalendar(currentMonth), [currentMonth]);
-
-  const formatStartTime = (value?: string) => normalizeClockValue(value);
 
   const formatMinutesToClock = (minutes: number) => {
     const normalized = ((Math.floor(minutes) % (24 * 60)) + 24 * 60) % (24 * 60);
@@ -694,7 +694,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       .filter(Boolean);
 
   /** 선택한 날짜의 To-do, 일기, 활동 로드 (로그인 시 Supabase, 비로그인 시 draft) */
-  const loadData = async (targetDate: string) => {
+  const loadData = useCallback(async (targetDate: string) => {
     setTodoError("");
     setJournalError("");
     setActivityError("");
@@ -784,10 +784,15 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     } else {
       setActivities(normalizeActivities((activityResponse.data ?? []) as DailyActivityRow[]));
     }
-  };
+  }, [
+    user,
+    draftTodosByDate,
+    draftJournalByDate,
+    draftActivitiesByDate
+  ]);
 
   /** 해당 월의 일별 활동/일기 요약 로드 (대시보드 리스트용) */
-  const loadMonthFlow = async (targetDate: string) => {
+  const loadMonthFlow = useCallback(async (targetDate: string) => {
     setMonthLoading(true);
     setMonthError("");
 
@@ -865,7 +870,11 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
 
     setMonthActivitiesByDate(monthActivities);
     setMonthJournalByDate(monthJournals);
-  };
+  }, [
+    user,
+    draftActivitiesByDate,
+    draftJournalByDate
+  ]);
 
   const updateDraftTodo = (items: UiTodo[]) => {
     setDraftTodosByDate((prev) => {
@@ -902,11 +911,10 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     });
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     void loadData(selectedDate);
     void loadMonthFlow(selectedDate);
-  }, [selectedDate, user?.id]); // loadData/loadMonthFlow는 user?.id·selectedDate가 변할 때만 재호출이 의도된 동작
+  }, [selectedDate, loadData, loadMonthFlow]); // user/드래프트 변경 시 함수가 바뀌면 자동 반영
 
   const makeLocalTodoId = () => {
     if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
