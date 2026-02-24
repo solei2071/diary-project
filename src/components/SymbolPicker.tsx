@@ -17,21 +17,27 @@ import {
 import { Search, X, GripVertical, ChevronUp } from "lucide-react";
 import { emojiCategories, searchEmojis } from "@/lib/emoji-data";
 import type { UserSymbol } from "@/lib/user-symbols";
+import { getMaxUserSymbols } from "@/lib/user-symbols";
 
 type SymbolPickerProps = {
   currentSymbols: UserSymbol[];
   onSymbolsChange: (symbols: UserSymbol[]) => void;
   onClose: () => void;
+  maxSymbols?: number;
+  labelCharacterLimit?: number;
 };
 
 export default function SymbolPicker({
   currentSymbols,
   onSymbolsChange,
   onClose,
+  maxSymbols: maxSymbolsOverride,
+  labelCharacterLimit = 30
 }: SymbolPickerProps) {
   const [activeCategory, setActiveCategory] = useState(emojiCategories[0].name);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingLabels, setEditingLabels] = useState<Record<string, string>>({});
+  const [limitShakeState, setLimitShakeState] = useState<Record<string, boolean>>({});
   const searchRef = useRef<HTMLInputElement>(null);
   const symbolsListRef = useRef<HTMLDivElement>(null);
   const draggingSymbol = useRef<string | null>(null);
@@ -41,6 +47,7 @@ export default function SymbolPicker({
     x: number;
     y: number;
   } | null>(null);
+  const [limitReachedMessage, setLimitReachedMessage] = useState("");
 
   const orderedSymbols = useMemo(
     () => [...currentSymbols].sort((a, b) => a.order - b.order),
@@ -70,13 +77,19 @@ export default function SymbolPicker({
         .filter((s) => s.emoji !== emoji)
         .map((s, i) => ({ ...s, order: i }));
       onSymbolsChange(next);
+      setLimitReachedMessage("");
     } else {
+      if (isLimitReached) {
+        setLimitReachedMessage(`Maximum ${maxSymbols} symbols reached`);
+        return;
+      }
       // 추가
       const next = [
         ...currentSymbols,
         { emoji, label: "", order: currentSymbols.length },
       ];
       onSymbolsChange(next);
+      setLimitReachedMessage("");
     }
   };
 
@@ -86,6 +99,7 @@ export default function SymbolPicker({
       .filter((s) => s.emoji !== emoji)
       .map((s, i) => ({ ...s, order: i }));
     onSymbolsChange(next);
+    setLimitReachedMessage("");
   };
 
   /** 라벨 변경 시작 */
@@ -97,7 +111,9 @@ export default function SymbolPicker({
   const commitLabel = (emoji: string) => {
     const label = editingLabels[emoji] ?? "";
     const next = currentSymbols.map((s) =>
-      s.emoji === emoji ? { ...s, label: label.trim() } : s
+      s.emoji === emoji
+        ? { ...s, label: label.trim().slice(0, labelCharacterLimit) }
+        : s
     );
     onSymbolsChange(next);
     setEditingLabels((prev) => {
@@ -105,6 +121,25 @@ export default function SymbolPicker({
       delete copy[emoji];
       return copy;
     });
+  };
+
+  const triggerLimitShake = (emoji: string) => {
+    setLimitShakeState((prev) => ({ ...prev, [emoji]: true }));
+    window.setTimeout(() => {
+      setLimitShakeState((prev) => ({ ...prev, [emoji]: false }));
+    }, 280);
+  };
+
+  const updateLabel = (emoji: string, nextRaw: string) => {
+    const next = nextRaw.slice(0, labelCharacterLimit);
+    const prev = editingLabels[emoji] ?? "";
+    if (
+      next.length === labelCharacterLimit &&
+      prev.length < labelCharacterLimit
+    ) {
+      triggerLimitShake(emoji);
+    }
+    setEditingLabels((prevMap) => ({ ...prevMap, [emoji]: next }));
   };
 
   const applySymbolOrder = (nextSymbols: UserSymbol[]) => {
@@ -122,6 +157,18 @@ export default function SymbolPicker({
     event.preventDefault();
     setContextMenu({ emoji, x: event.clientX, y: event.clientY });
   };
+
+  const maxSymbols = maxSymbolsOverride ?? getMaxUserSymbols();
+  const isLimitReached = currentSymbols.length >= maxSymbols;
+
+  useEffect(() => {
+    if (isLimitReached) {
+      setLimitReachedMessage(`Maximum ${maxSymbols} symbols reached`);
+      return;
+    }
+
+    setLimitReachedMessage("");
+  }, [isLimitReached, maxSymbols]);
 
   const moveSymbolToIndex = (emoji: string, targetIndex: number) => {
     const sourceIndex = orderedSymbols.findIndex((item) => item.emoji === emoji);
@@ -190,6 +237,12 @@ export default function SymbolPicker({
       {/* ── Header ── */}
       <div className="mb-3 flex items-center justify-between">
         <span className="n-h2">Customize Symbols</span>
+        <span className="text-xs text-[var(--muted)]">
+          {currentSymbols.length}/{maxSymbols}
+        </span>
+        {limitReachedMessage ? (
+          <p className="mt-1 text-xs text-[var(--danger)]">{limitReachedMessage}</p>
+        ) : null}
         <button
           onClick={onClose}
           className="n-btn-ghost h-7 w-7 p-0"
@@ -247,16 +300,23 @@ export default function SymbolPicker({
       )}
 
       {/* ── Emoji Grid ── */}
-      <div className="n-emoji-grid mb-3 max-h-48 overflow-y-auto rounded-md border border-[var(--border)] p-2">
+      <div className="n-emoji-grid mb-3 max-h-[16rem] overflow-y-auto rounded-md border border-[var(--border)] p-2">
         {displayEmojis.length > 0 ? (
           displayEmojis.map((emoji) => (
             <button
               key={emoji}
               onClick={() => toggleEmoji(emoji)}
+              disabled={isLimitReached && !selectedSet.has(emoji)}
               className={`n-emoji-btn ${
                 selectedSet.has(emoji) ? "n-emoji-btn--selected" : ""
-              }`}
-              title={selectedSet.has(emoji) ? `Remove ${emoji}` : `Add ${emoji}`}
+              } ${isLimitReached && !selectedSet.has(emoji) ? "opacity-45 cursor-not-allowed" : ""}`}
+	              title={
+	                selectedSet.has(emoji)
+	                  ? `Remove ${emoji}`
+	                  : isLimitReached
+	                    ? `Maximum ${maxSymbols} symbols reached`
+	                    : `Add ${emoji}`
+	              }
             >
               {emoji}
             </button>
@@ -279,7 +339,7 @@ export default function SymbolPicker({
           </div>
           <div
             ref={symbolsListRef}
-            className="grid max-h-48 divide-y divide-[var(--border)] overflow-y-auto rounded-md border border-[var(--border)]"
+            className="grid max-h-[16rem] divide-y divide-[var(--border)] overflow-y-auto rounded-md border border-[var(--border)]"
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => event.preventDefault()}
           >
@@ -307,11 +367,11 @@ export default function SymbolPicker({
                     {/* 삭제 (원 안의 - 버튼) */}
                     <button
                       onClick={() => removeSymbol(symbol.emoji)}
-                      className="h-6 w-6 shrink-0 rounded-full border border-[var(--danger)]/50 text-[11px] font-bold text-[var(--danger)] hover:bg-[var(--danger)]/10"
+                      className="h-6 w-6 shrink-0 rounded-full border border-[var(--danger)]/50 bg-white text-[11px] font-bold text-[var(--danger)] hover:bg-[var(--danger)]/10 dark:bg-transparent"
                       aria-label={`Remove ${symbol.emoji}`}
                       title="Remove symbol"
                     >
-                      −
+                      <X className="mx-auto h-3.5 w-3.5" />
                     </button>
 
                     {/* 이모지 */}
@@ -319,26 +379,43 @@ export default function SymbolPicker({
 
                     {/* 라벨 입력 */}
                     {isEditing ? (
-                      <input
-                        autoFocus
-                        value={editingLabels[symbol.emoji] ?? ""}
-                        onChange={(e) =>
-                          setEditingLabels((prev) => ({
-                            ...prev,
-                            [symbol.emoji]: e.target.value,
-                          }))
-                        }
-                        onBlur={() => commitLabel(symbol.emoji)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            commitLabel(symbol.emoji);
-                          }
-                        }}
-                        className="n-input min-w-0 flex-1 py-1 text-sm"
-                        placeholder="What does this mean?"
-                        maxLength={30}
-                      />
+                      <div className="min-w-0 flex-1">
+                        <input
+                          autoFocus
+                          value={editingLabels[symbol.emoji] ?? ""}
+                          onChange={(e) => updateLabel(symbol.emoji, e.target.value)}
+                          onBlur={() => commitLabel(symbol.emoji)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitLabel(symbol.emoji);
+                              return;
+                            }
+
+                            if (
+                              e.key.length === 1 &&
+                              (editingLabels[symbol.emoji]?.length ?? 0) >=
+                                labelCharacterLimit
+                            ) {
+                              e.preventDefault();
+                              triggerLimitShake(symbol.emoji);
+                            }
+                          }}
+                          className={`n-input w-full py-1 text-sm ${
+                            limitShakeState[symbol.emoji] ? "n-input-shake" : ""
+                          }`}
+                          placeholder="What does this mean?"
+                          maxLength={labelCharacterLimit}
+                        />
+                        {(editingLabels[symbol.emoji]?.length ?? 0) >=
+                          labelCharacterLimit && (
+                          <p className="mt-1 text-xs text-[var(--danger)]" aria-live="polite">
+                            {editingLabels[symbol.emoji]?.length === labelCharacterLimit
+                              ? "Character limit reached"
+                              : null}
+                          </p>
+                        )}
+                      </div>
                     ) : (
                       <button
                         onClick={() =>
@@ -362,8 +439,8 @@ export default function SymbolPicker({
       )}
 
       {contextMenu && (
-        <div
-          className="fixed z-30 rounded-md border border-[var(--border)] bg-white px-2 py-1 shadow"
+          <div
+            className="fixed z-30 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 shadow"
           style={{
             left: contextMenu.x,
             top: contextMenu.y,

@@ -44,6 +44,17 @@
    - Safari에서 페이지 열기 → 공유 버튼 → "홈 화면에 추가"
    - `manifest.webmanifest`와 iOS 용 메타 태그가 적용되어 앱 화면처럼 표시됩니다.
 
+## PWA 출시 체크리스트
+
+앱 출시 전 핵심 점검은 [PWA_RELEASE_CHECKLIST.md](./PWA_RELEASE_CHECKLIST.md)에서 실행 체크 형태로 관리합니다.  
+기준은 iPhone 웹앱(홈 화면 추가) 런칭을 우선으로 하며, 다음이 핵심입니다.
+
+- 홈 화면 설치 동작
+- 오프라인 fallback (`offline.html`)
+- 서비스 워커 업데이트 정책
+- 핵심 기능 점검(인증/To-do/Activity/Notes/캘린더/설정)
+- `/admin` 접근 제한
+
 ## Supabase SQL
 
 `supabase/schema.sql`에 다음이 포함됩니다.

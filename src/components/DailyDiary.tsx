@@ -13,11 +13,27 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent, MouseEvent } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Palette, Save, Settings } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Palette,
+  Save,
+  Search,
+  Settings
+} from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import type { DailyActivityRow, JournalRow } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
-import { loadUserSymbols, saveUserSymbols, getDefaultSymbols } from "@/lib/user-symbols";
+import {
+  loadUserSymbols,
+  saveUserSymbols,
+  getDefaultSymbols,
+  type PlanFeatures,
+  getPlanLimits,
+  type UserSymbolPlan
+} from "@/lib/user-symbols";
 import type { UserSymbol } from "@/lib/user-symbols";
 import SymbolPicker from "./SymbolPicker";
 
@@ -31,6 +47,30 @@ function toLocalDateString(date: Date): string {
 
 const initialDate = toLocalDateString(new Date());
 const NOTE_CHAR_LIMIT = 2000;
+const ACTIVITY_TEMPLATE_STORAGE_KEY = "diary-activity-templates";
+const TODO_REPEAT_WEEKS = [1, 2, 3, 4, 5];
+const TODO_REPEAT_DAY_LABELS = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" }
+];
+
+const getSafeSupabaseError = (message?: string | null) => {
+  if (!message) return "";
+  const hasSchemaCachePrefix = message.includes("Could not find the table");
+  const hasKnownTable =
+    message.includes("public.daily_activities") ||
+    message.includes("public.journal_entries") ||
+    message.includes("public.todos");
+  const inSchemaCache = message.includes("schema cache");
+  return hasSchemaCachePrefix && hasKnownTable && inSchemaCache ? "" : message;
+};
+
+const shouldIgnoreSupabaseSchemaError = (message?: string | null) => {
+  return getSafeSupabaseError(message) === "";
+};
 
 /** 날짜 문자열을 읽기 쉬운 형식으로 변환 (예: 2/17 (Mon)) */
 function prettyDateLabel(value: string) {
@@ -318,9 +358,27 @@ type UiActivityDraft = {
   end_time?: string;
 };
 
+type ActivityTemplate = {
+  id: string;
+  name: string;
+  emoji: string;
+  hours: number;
+  label: string;
+  startTime?: string;
+  endTime?: string;
+};
+
+type SyncScope = "journal" | "todo" | "activity";
+type SyncConflictState = {
+  scope: SyncScope;
+  date: string;
+};
+
 type Props = {
   session: Session | null;
   onRequestAuth: () => void; // 비로그인 시 저장 요청 시 부모가 로그인 모달 띄우도록 호출
+  symbolPlan?: UserSymbolPlan;
+  planFeatures?: PlanFeatures;
 };
 
 /** 시간 값을 분 단위로 정규화 (0.0167h=1m) */
@@ -350,6 +408,50 @@ const normalizeClockValue = (value?: string) => {
 
 const formatStartTime = (value?: string) => normalizeClockValue(value);
 
+const normalizeStoredTemplate = (entry: unknown): ActivityTemplate | null => {
+  if (
+    typeof entry !== "object" ||
+    entry === null ||
+    Array.isArray(entry)
+  ) {
+    return null;
+  }
+
+  const row = entry as Record<string, unknown>;
+  if (
+    typeof row.emoji !== "string" ||
+    !row.emoji.trim() ||
+    typeof row.name !== "string" ||
+    !row.name.trim()
+  ) {
+    return null;
+  }
+
+  const rawStart = typeof row.startTime === "string" ? row.startTime : "00:00";
+  const rawEnd = typeof row.endTime === "string" ? row.endTime : "00:00";
+  const safeStart = rawStart.trim().match(/^\d{1,2}:\d{2}$/) ? rawStart.trim() : "00:00";
+  const safeEnd = rawEnd.trim().match(/^\d{1,2}:\d{2}$/) ? rawEnd.trim() : "00:00";
+
+  const rawId = typeof row.id === "string" ? row.id.trim() : "";
+  const id = rawId.length > 0
+    ? rawId
+    : `template-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+
+  const rawHours = Number(row.hours ?? 0);
+  const hours = normalizeActivityHours(Number.isFinite(rawHours) ? rawHours : 0);
+  const label = typeof row.label === "string" ? row.label : "";
+
+  return {
+    id,
+    name: row.name.trim(),
+    emoji: row.emoji,
+    hours,
+    label,
+    startTime: safeStart,
+    endTime: safeEnd
+  };
+};
+
 const normalizeActivitySource = (row: DailyActivityRow): UiActivity => ({
   id: row.id,
   emoji: row.emoji ?? "",
@@ -358,6 +460,37 @@ const normalizeActivitySource = (row: DailyActivityRow): UiActivity => ({
   startTime: normalizeClockValue(row.start_time),
   endTime: normalizeClockValue(row.end_time)
 });
+
+const pickLatestUpdatedAt = (rows: Array<{ updated_at?: string | null }>): string | null => {
+  return rows.reduce<string | null>((acc, row) => {
+    const next = row.updated_at;
+    if (!next) return acc;
+    if (!acc || next > acc) return next;
+    return acc;
+  }, null);
+};
+
+const buildSyncConflictMessage = (scope: SyncScope, date: string) => {
+  const label = prettyDateLabel(date);
+  return scope === "journal"
+    ? `Another device changed Journal Notes for ${label}. Please reload before editing.`
+    : scope === "todo"
+      ? `Another device changed To-do for ${label}. Please reload before editing.`
+      : `Another device changed Activity Log for ${label}. Please reload before editing.`;
+};
+
+const sortTodosForDisplay = (items: UiTodo[]) =>
+  [...items].sort((a, b) => {
+    if (a.done !== b.done) {
+      return a.done ? 1 : -1;
+    }
+    const aTitle = a.title.toLowerCase();
+    const bTitle = b.title.toLowerCase();
+    if (aTitle !== bTitle) {
+      return aTitle.localeCompare(bTitle);
+    }
+    return a.due_date.localeCompare(b.due_date);
+  });
 
 const normalizeDraftActivity = (row: UiActivityDraft): UiActivity => ({
   id: row.id,
@@ -415,13 +548,21 @@ function TimeInput({ value, onCommit, onAutoAdvance, ariaLabel }: {
   );
 }
 
-export default function DailyDiary({ session, onRequestAuth }: Props) {
+export default function DailyDiary({
+  session,
+  onRequestAuth,
+  symbolPlan: symbolPlanOverride,
+  planFeatures: planFeaturesOverride
+}: Props) {
   const user = session?.user ?? null;
   const isGuest = !user;
   const [selectedDate, setSelectedDate] = useState(initialDate);
   const [todos, setTodos] = useState<UiTodo[]>([]);
   const [activities, setActivities] = useState<UiActivity[]>([]);
   const [isLoadingTodos, setIsLoadingTodos] = useState(true);
+  const [isTodoDirty, setIsTodoDirty] = useState(false);
+  const [isJournalDirty, setIsJournalDirty] = useState(false);
+  const [isActivityDirty, setIsActivityDirty] = useState(false);
   const [journalText, setJournalText] = useState("");
   const [isSavingJournal, setIsSavingJournal] = useState(false);
   const [todoError, setTodoError] = useState("");
@@ -451,14 +592,23 @@ export default function DailyDiary({ session, onRequestAuth }: Props) {
   const [monthJournalByDate, setMonthJournalByDate] = useState<Record<string, string>>({});
   const [monthLoading, setMonthLoading] = useState(true);
   const [monthError, setMonthError] = useState("");
+  const [journalUpdatedAt, setJournalUpdatedAt] = useState<string | null>(null);
+  const [todoUpdatedAt, setTodoUpdatedAt] = useState<string | null>(null);
+  const [activityUpdatedAt, setActivityUpdatedAt] = useState<string | null>(null);
+  const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
   const [customEmoji, setCustomEmoji] = useState("📝");
   const [customHours, setCustomHours] = useState("1");
   const [customStartTime, setCustomStartTime] = useState("00:00");
+  const [customTemplateName, setCustomTemplateName] = useState("Default");
   const [activityLabelEditingByDate, setActivityLabelEditingByDate] = useState<Record<string, boolean>>({});
+  const [todoRepeatDays, setTodoRepeatDays] = useState<number[]>([]);
+  const [todoRepeatWeeks, setTodoRepeatWeeks] = useState<number>(TODO_REPEAT_WEEKS[1] ?? 1);
+  const [activityConflictWarnings, setActivityConflictWarnings] = useState<Record<string, string>>({});
   const activityListRef = useRef<HTMLDivElement | null>(null);
   const activityTrashRef = useRef<HTMLDivElement | null>(null);
   const [isDraggingActivity, setIsDraggingActivity] = useState(false);
   const [isOverActivityTrash, setIsOverActivityTrash] = useState(false);
+  const todoInputRef = useRef<HTMLInputElement | null>(null);
   const [activityContextMenu, setActivityContextMenu] = useState<{
     x: number;
     y: number;
@@ -477,10 +627,10 @@ export default function DailyDiary({ session, onRequestAuth }: Props) {
     return 15;
   });
   const [isActivityStepPickerOpen, setIsActivityStepPickerOpen] = useState(false);
-  const [userSymbols, setUserSymbols] = useState<UserSymbol[]>(() => {
-    const saved = loadUserSymbols();
-    return saved.length > 0 ? saved : getDefaultSymbols();
-  });
+  const [dashboardQuery, setDashboardQuery] = useState("");
+  const [activityLogQuery, setActivityLogQuery] = useState("");
+  const [isTemplatePanelOpen, setIsTemplatePanelOpen] = useState(false);
+  const [userSymbols, setUserSymbols] = useState<UserSymbol[]>(getDefaultSymbols);
   const [isSymbolPickerOpen, setIsSymbolPickerOpen] = useState(false);
   const [dashboardViewMode, setDashboardViewMode] = useState<"week" | "month">(() => {
     try {
@@ -495,6 +645,71 @@ export default function DailyDiary({ session, onRequestAuth }: Props) {
   };
   const currentMonth = selectedDate.slice(0, 7);
   const today = toLocalDateString(new Date());
+  const symbolPlan = symbolPlanOverride ?? "free";
+  const planLimits = useMemo(
+    () => planFeaturesOverride ?? getPlanLimits(symbolPlan),
+    [symbolPlan, planFeaturesOverride]
+  );
+  const symbolLimit = planLimits.symbolLimit;
+  const canSearchSummary = planLimits.canSearch;
+  const canUseTemplates = planLimits.canTemplates;
+  const hasAdvancedSummary = planLimits.canAdvancedSummary;
+  const canTodoRepeat = planLimits.canTodoRepeat;
+  const [activityTemplates, setActivityTemplates] = useState<ActivityTemplate[]>(() => {
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem(ACTIVITY_TEMPLATE_STORAGE_KEY) : null;
+        const parsed = raw ? (JSON.parse(raw) as Array<unknown>) : [];
+        if (!Array.isArray(parsed)) {
+          return [];
+        }
+        return parsed
+          .map(normalizeStoredTemplate)
+          .filter((item): item is ActivityTemplate => item !== null);
+    } catch {
+      return [];
+    }
+  });
+  const selectedDateRef = useRef(selectedDate);
+  const syncStateRef = useRef({
+    todo: false,
+    journal: false,
+    activity: false
+  });
+
+  useEffect(() => {
+    selectedDateRef.current = selectedDate;
+    syncStateRef.current = {
+      todo: isTodoDirty,
+      journal: isJournalDirty,
+      activity: isActivityDirty
+    };
+  }, [selectedDate, isTodoDirty, isJournalDirty, isActivityDirty]);
+
+  useEffect(() => {
+    const saved = loadUserSymbols(symbolPlan, planLimits.symbolLimit);
+    const next = saved.length > 0 ? saved : getDefaultSymbols();
+    setUserSymbols(next);
+  }, [symbolPlan, planLimits.symbolLimit]);
+
+  useEffect(() => {
+    if (!canUseTemplates) {
+      if (activityTemplates.length > 0) {
+        setActivityTemplates([]);
+        try {
+          localStorage.removeItem(ACTIVITY_TEMPLATE_STORAGE_KEY);
+        } catch {
+          // no-op
+        }
+      }
+      return;
+    }
+
+    try {
+      localStorage.setItem(ACTIVITY_TEMPLATE_STORAGE_KEY, JSON.stringify(activityTemplates));
+    } catch {
+      // no-op
+    }
+  }, [activityTemplates, canUseTemplates]);
 
   const calendarDays = useMemo(() => getMonthDaysForCalendar(currentMonth), [currentMonth]);
 
@@ -555,6 +770,16 @@ export default function DailyDiary({ session, onRequestAuth }: Props) {
     return null;
   };
 
+  const appendSymbolToTodo = (emoji: string) => {
+    if (!isAddingTodo) {
+      setIsAddingTodo(true);
+      setNewTodoTitle(`${emoji} `);
+    } else {
+      setNewTodoTitle((prev) => (prev ? `${emoji} ${prev}` : `${emoji} `));
+    }
+    setTimeout(() => todoInputRef.current?.focus(), 0);
+  };
+
   const formatHoursLabel = (hours: number) => {
     const minutes = Math.max(0, Math.round(hours * 60));
     const h = Math.floor(minutes / 60);
@@ -589,10 +814,117 @@ export default function DailyDiary({ session, onRequestAuth }: Props) {
     return formatMinutesToClock(normalizedMinutes);
   };
 
+  const getEffectiveEndTime = (activity: UiActivity) => {
+    const normalizedStart = formatStartTime(activity.startTime ?? "00:00");
+    const normalizedEnd = formatStartTime(activity.endTime ?? "00:00");
+    const hasExplicitEnd = Boolean(activity.endTime && !(normalizedStart === "00:00" && normalizedEnd === "00:00"));
+    if (hasExplicitEnd) return normalizedEnd;
+    return calculateEndTimeFromHours(normalizedStart, activity.hours) ?? "00:00";
+  };
+
+  const hasExplicitTimeInput = (activity: UiActivity) => {
+    const normalizedStart = formatStartTime(activity.startTime ?? "00:00");
+    const normalizedEnd = formatStartTime(activity.endTime ?? "00:00");
+    return normalizedStart !== "00:00" || normalizedEnd !== "00:00";
+  };
+
   const formatActivityTimeWindow = (activity: UiActivity) => {
     const start = formatStartTime(activity.startTime ?? "00:00");
-    const end = activity.endTime ? formatStartTime(activity.endTime) : calculateEndTimeFromHours(start, activity.hours);
+    const end = getEffectiveEndTime(activity);
     return end ? `${start} - ${end}` : start;
+  };
+
+  const buildTodoRepeatDates = (baseDate: string, repeatDays: number[], repeatWeekCount: number) => {
+    if (!baseDate || !repeatDays.length) {
+      return [baseDate];
+    }
+
+    const base = new Date(`${baseDate}T00:00:00`);
+    const baseWeekday = base.getDay();
+    const weekCount = TODO_REPEAT_WEEKS.includes(repeatWeekCount) ? repeatWeekCount : TODO_REPEAT_WEEKS[1] ?? 1;
+    const days = [...new Set(repeatDays.filter((value) => value >= 0 && value <= 6))].sort((a, b) => a - b);
+    const generated = new Set<string>();
+
+    for (let weekOffset = 0; weekOffset < weekCount; weekOffset += 1) {
+      days.forEach((targetWeekday) => {
+        const dayOffset = targetWeekday - baseWeekday + weekOffset * 7;
+        if (weekOffset === 0 && dayOffset < 0) {
+          return;
+        }
+        const date = new Date(base);
+        date.setDate(base.getDate() + dayOffset);
+        generated.add(toLocalDateString(date));
+      });
+    }
+
+    const nextDates = Array.from(generated).sort();
+    return nextDates.length ? nextDates : [baseDate];
+  };
+
+  type ActivityWindow = {
+    start: number;
+    end: number;
+  };
+
+  const getActivityWindows = (activity: UiActivity): ActivityWindow[] | null => {
+    const start = parseClockTimeToMinutes(formatStartTime(activity.startTime));
+    if (start === null) return null;
+
+    const parsedHours = normalizeActivityHours(activity.hours);
+    const endCandidate = parseClockTimeToMinutes(getEffectiveEndTime(activity));
+
+    if (endCandidate === null || parsedHours <= 0) return null;
+    const startMinutes = start;
+    let endMinutes = endCandidate;
+    if (endMinutes <= startMinutes) {
+      endMinutes += 24 * 60;
+    }
+    if (endMinutes <= startMinutes) {
+      return null;
+    }
+
+    if (endMinutes <= 24 * 60) {
+      return [{ start: startMinutes, end: endMinutes }];
+    }
+    return [
+      { start: 0, end: endMinutes - 24 * 60 },
+      { start: startMinutes, end: 24 * 60 }
+    ];
+  };
+
+  const hasTimeWindowOverlap = (source: ActivityWindow[], target: ActivityWindow[]) => {
+    return source.some((left) => target.some((right) => left.start < right.end && right.start < left.end));
+  };
+
+  const buildActivityConflictWarnings = (rows: UiActivity[]) => {
+    const warnings: Record<string, string> = {};
+    const windowsByEmoji = rows
+      .filter((activity) => activity.hours > 0 && hasExplicitTimeInput(activity))
+      .map((activity) => ({ activity, windows: getActivityWindows(activity) }))
+      .filter((entry): entry is { activity: UiActivity; windows: ActivityWindow[] } => entry.windows !== null);
+    if (windowsByEmoji.length < 2) {
+      return warnings;
+    }
+
+    for (let i = 0; i < windowsByEmoji.length - 1; i += 1) {
+      for (let j = i + 1; j < windowsByEmoji.length; j += 1) {
+        const left = windowsByEmoji[i];
+        const right = windowsByEmoji[j];
+        if (!hasTimeWindowOverlap(left.windows, right.windows)) {
+          continue;
+        }
+        const leftEmoji = left.activity.emoji;
+        const rightEmoji = right.activity.emoji;
+        if (!warnings[leftEmoji]) {
+          warnings[leftEmoji] = `Time range overlaps with ${rightEmoji}`;
+        }
+        if (!warnings[rightEmoji]) {
+          warnings[rightEmoji] = `Time range overlaps with ${leftEmoji}`;
+        }
+      }
+    }
+
+    return warnings;
   };
 
 /** 같은 이모지의 여러 행을 합산해 하나의 UiActivity로 */
@@ -674,21 +1006,117 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       year: "numeric"
     });
   }, [dashboardViewMode, currentMonth]);
+  const symbolLabelByEmoji = useMemo(() => {
+    const map = new Map<string, string>();
+    userSymbols.forEach((symbol) => {
+      const label = trimActivityLabel(symbol.label);
+      if (label) {
+        map.set(symbol.emoji, label);
+      }
+    });
+    return map;
+  }, [userSymbols]);
   const summaryActivities = useMemo(
     () =>
       Object.entries(
-        displayedDays.reduce<Record<string, number>>((acc, day) => {
+        displayedDays.reduce<Record<string, { hours: number; label: string }>>((acc, day) => {
           const rowActivities = monthActivitiesByDate[day] ?? [];
           rowActivities.forEach((activity) => {
-            acc[activity.emoji] = (acc[activity.emoji] ?? 0) + (Number(activity.hours) || 0);
+            const target = acc[activity.emoji] ?? {
+              hours: 0,
+              label: ""
+            };
+            const activityLabel = trimActivityLabel(activity.label);
+            target.hours += Number(activity.hours) || 0;
+            if (!target.label && activityLabel) {
+              target.label = activityLabel;
+            }
+            acc[activity.emoji] = target;
+          });
+          Object.keys(acc).forEach((emoji) => {
+            if (!acc[emoji].label) {
+              acc[emoji].label = symbolLabelByEmoji.get(emoji) ?? "";
+            }
           });
           return acc;
         }, {})
       )
-        .map(([emoji, hours]) => ({ emoji, hours: Number(hours.toFixed(2)) }))
+        .map(([emoji, item]) => ({
+          emoji,
+          hours: Number(item.hours.toFixed(2)),
+          label: item.label
+        }))
         .sort((a, b) => b.hours - a.hours || a.emoji.localeCompare(b.emoji)),
+      [displayedDays, monthActivitiesByDate, symbolLabelByEmoji]
+  );
+  const topThreeActivities = useMemo(
+    () => summaryActivities.slice(0, 3),
+    [summaryActivities]
+  );
+
+  const normalizedDashboardQuery = dashboardQuery.trim().toLowerCase();
+  const doesActivityMatchQuery = (activity: UiActivity) => {
+    if (!normalizedDashboardQuery) return true;
+    const emoji = activity.emoji.toLowerCase();
+    const label = activity.label.toLowerCase();
+    return emoji.includes(normalizedDashboardQuery) || label.includes(normalizedDashboardQuery);
+  };
+  const filteredSummaryActivities = useMemo(
+    () =>
+      summaryActivities
+        .filter(doesActivityMatchQuery)
+        .slice(0, planLimits.topSummaryLimit),
+    [summaryActivities, normalizedDashboardQuery, planLimits.topSummaryLimit]
+  );
+  const normalizedActivityLogQuery = activityLogQuery.trim().toLowerCase();
+  const filteredActivities = useMemo(() => {
+    if (!normalizedActivityLogQuery) return activities;
+    return activities.filter((activity) => {
+      const emoji = activity.emoji.toLowerCase();
+      const label = trimActivityLabel(activity.label).toLowerCase();
+      return emoji.includes(normalizedActivityLogQuery) || label.includes(normalizedActivityLogQuery);
+    });
+  }, [activities, normalizedActivityLogQuery]);
+
+  const activeTemplateItems = useMemo(() => (canUseTemplates ? activityTemplates : []), [activityTemplates, canUseTemplates]);
+
+  const dashboardTotalHours = useMemo(
+    () =>
+      displayedDays.reduce((sum, day) => {
+        const row = monthActivitiesByDate[day] ?? [];
+        return row.reduce((acc, item) => acc + Number(item.hours || 0), sum);
+      }, 0),
     [displayedDays, monthActivitiesByDate]
   );
+
+  const dashboardActiveDays = useMemo(
+    () =>
+      displayedDays.reduce((sum, day) => {
+        const hasActivity = (monthActivitiesByDate[day] ?? []).some((item) => item.hours > 0);
+        return hasActivity ? sum + 1 : sum;
+      }, 0),
+    [displayedDays, monthActivitiesByDate]
+  );
+
+  const dashboardLongestStreak = useMemo(() => {
+    let best = 0;
+    let current = 0;
+    displayedDays.forEach((day) => {
+      const hasActivity = (monthActivitiesByDate[day] ?? []).some((item) => item.hours > 0);
+      if (hasActivity) {
+        current += 1;
+        if (current > best) best = current;
+      } else {
+        current = 0;
+      }
+    });
+    return best;
+  }, [displayedDays, monthActivitiesByDate]);
+  const dashboardRestDayRatio = useMemo(() => {
+    if (!displayedDays.length) return 0;
+    const restDays = displayedDays.length - dashboardActiveDays;
+    return Math.round((restDays / displayedDays.length) * 100);
+  }, [displayedDays.length, dashboardActiveDays]);
 
   /** 각 이모지별로 가장 많은 시간을 기록한 날 (M/D 형식) */
   const topDayByEmoji = useMemo(() => {
@@ -739,11 +1167,49 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       .map((line) => line.trim())
       .filter(Boolean);
 
+  const loadDataRef = useRef<(targetDate: string) => Promise<void>>(async () => {});
+  const loadMonthFlowRef = useRef<(targetDate: string) => Promise<void>>(async () => {});
+
+  const handleRemoteChange = useCallback(async (scope: SyncScope, changedDate: string) => {
+    const isCurrentDate = changedDate === selectedDateRef.current;
+    const isCurrentMonth = changedDate.slice(0, 7) === selectedDateRef.current.slice(0, 7);
+    const reloadCurrentData = loadDataRef.current;
+    const reloadMonthFlow = loadMonthFlowRef.current;
+
+    if (!isCurrentDate) {
+      if (isCurrentMonth) {
+        await reloadMonthFlow(selectedDateRef.current);
+      }
+      return;
+    }
+
+    const dirty = scope === "journal" ? syncStateRef.current.journal : scope === "todo" ? syncStateRef.current.todo : syncStateRef.current.activity;
+    if (!dirty) {
+      await reloadCurrentData(selectedDateRef.current);
+      await reloadMonthFlow(selectedDateRef.current);
+      setSyncConflict(null);
+      return;
+    }
+
+    setSyncConflict({ scope, date: changedDate });
+  }, [selectedDateRef, syncStateRef]);
+
+  const resolveSyncConflict = async () => {
+    const targetDate = selectedDateRef.current;
+    setSyncConflict(null);
+    await loadDataRef.current(targetDate);
+    await loadMonthFlowRef.current(targetDate);
+    setSyncConflict(null);
+  };
+
+  const cancelSyncConflict = () => setSyncConflict(null);
+
   /** 선택한 날짜의 To-do, 일기, 활동 로드 (로그인 시 Supabase, 비로그인 시 draft) */
   const loadData = useCallback(async (targetDate: string) => {
     setTodoError("");
     setJournalError("");
     setActivityError("");
+    setSyncConflict(null);
 
     if (!user) {
       setIsLoadingTodos(false);
@@ -752,7 +1218,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       const seededJournal = draftJournalByDate[targetDate];
       const seededActivities = draftActivitiesByDate[targetDate];
 
-      setTodos(seededTodos ?? []);
+      setTodos(sortTodosForDisplay(seededTodos ?? []));
       setJournalText(seededJournal ?? (seed ? seed.memo.join("\n") : ""));
       if (seededActivities?.length) {
         setActivities(
@@ -774,6 +1240,12 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       } else {
         setActivities([]);
       }
+      setIsTodoDirty(false);
+      setIsJournalDirty(false);
+      setIsActivityDirty(false);
+      setJournalUpdatedAt(null);
+      setTodoUpdatedAt(null);
+      setActivityUpdatedAt(null);
       return;
     }
 
@@ -802,40 +1274,60 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setIsLoadingTodos(false);
 
     if (todoResponse.error) {
-      setTodoError(todoResponse.error.message);
-      setTodos([]);
+      setTodoError(getSafeSupabaseError(todoResponse.error.message));
+      if (!shouldIgnoreSupabaseSchemaError(todoResponse.error.message)) {
+        setTodos([]);
+      }
+      setTodoUpdatedAt(null);
     } else {
+      setTodoUpdatedAt(pickLatestUpdatedAt((todoResponse.data ?? []) as Array<{ updated_at?: string | null }>));
       setTodos(
-        (todoResponse.data ?? []).map((item) => ({
+        sortTodosForDisplay(
+          (todoResponse.data ?? []).map((item) => ({
           id: item.id,
           due_date: item.due_date,
           title: item.title,
           done: item.done
-        }))
+          }))
+        )
       );
     }
 
     if (journalResponse.error) {
-      setJournalError(journalResponse.error.message);
-      setJournalText("");
+      setJournalError(getSafeSupabaseError(journalResponse.error.message));
+      if (!shouldIgnoreSupabaseSchemaError(journalResponse.error.message)) {
+        setJournalText("");
+      }
+      setJournalUpdatedAt(null);
     } else if (journalResponse.data) {
+      setJournalUpdatedAt((journalResponse.data as JournalRow).updated_at ?? null);
       setJournalText((journalResponse.data as JournalRow).content ?? "");
     } else {
+      setJournalUpdatedAt(null);
       setJournalText("");
     }
 
     if (activityResponse.error) {
-      setActivityError(activityResponse.error.message);
-      setActivities([]);
+      setActivityError(getSafeSupabaseError(activityResponse.error.message));
+      if (!shouldIgnoreSupabaseSchemaError(activityResponse.error.message)) {
+        setActivities([]);
+      }
+      setActivityUpdatedAt(null);
     } else {
+      setActivityUpdatedAt(pickLatestUpdatedAt((activityResponse.data ?? []) as Array<{ updated_at?: string | null }>));
       setActivities(normalizeActivities((activityResponse.data ?? []) as DailyActivityRow[]));
     }
+
+    setIsTodoDirty(false);
+    setIsJournalDirty(false);
+    setIsActivityDirty(false);
   }, [
     user,
     draftTodosByDate,
     draftJournalByDate,
     draftActivitiesByDate
   ]);
+  loadDataRef.current = loadData;
 
   /** 해당 월의 일별 활동/일기 요약 로드 (대시보드 리스트용) */
   const loadMonthFlow = useCallback(async (targetDate: string) => {
@@ -898,6 +1390,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
 
     if (journalResponse.error || activityResponse.error) {
       const messages = [journalResponse.error?.message, activityResponse.error?.message]
+        .map((item) => getSafeSupabaseError(item))
         .filter(Boolean)
         .join(" / ");
       setMonthError(messages);
@@ -921,10 +1414,82 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     draftActivitiesByDate,
     draftJournalByDate
   ]);
+  loadMonthFlowRef.current = loadMonthFlow;
+
+  const hasSyncConflictForSave = useCallback(async (scope: SyncScope, targetDate: string) => {
+    if (!user) return false;
+
+    const expectedUpdatedAt =
+      scope === "journal" ? journalUpdatedAt : scope === "todo" ? todoUpdatedAt : activityUpdatedAt;
+
+    const latestUpdatedAt = await (async () => {
+      if (scope === "journal") {
+        const response = await supabase
+          .from("journal_entries")
+          .select("updated_at")
+          .eq("user_id", user.id)
+          .eq("entry_date", targetDate)
+          .maybeSingle();
+
+        if (response.error) {
+          return {
+            latestUpdatedAt: null as string | null,
+            error: getSafeSupabaseError(response.error.message)
+          };
+        }
+
+        return {
+          latestUpdatedAt: (response.data as JournalRow | null)?.updated_at ?? null,
+          error: null as string | null
+        };
+      }
+
+      const response = await supabase
+        .from(scope === "todo" ? "todos" : "daily_activities")
+        .select("updated_at")
+        .eq("user_id", user.id)
+        .eq(scope === "todo" ? "due_date" : "activity_date", targetDate);
+
+      if (response.error) {
+        return {
+          latestUpdatedAt: null as string | null,
+          error: getSafeSupabaseError(response.error.message)
+        };
+      }
+
+      return {
+        latestUpdatedAt: pickLatestUpdatedAt((response.data ?? []) as Array<{ updated_at?: string | null }>),
+        error: null as string | null
+      };
+    })();
+
+    if (latestUpdatedAt.error) {
+      if (scope === "journal") setJournalError(latestUpdatedAt.error);
+      if (scope === "todo") setTodoError(latestUpdatedAt.error);
+      if (scope === "activity") setActivityError(latestUpdatedAt.error);
+      return true;
+    }
+
+    if (latestUpdatedAt.latestUpdatedAt !== expectedUpdatedAt) {
+      setSyncConflict({ scope, date: targetDate });
+      await loadData(targetDate);
+      await loadMonthFlow(targetDate);
+      return true;
+    }
+
+    return false;
+  }, [
+    user,
+    journalUpdatedAt,
+    todoUpdatedAt,
+    activityUpdatedAt,
+    loadData,
+    loadMonthFlow
+  ]);
 
   const updateDraftTodo = (items: UiTodo[]) => {
     setDraftTodosByDate((prev) => {
-      const next = { ...prev, [selectedDate]: items };
+      const next = { ...prev, [selectedDate]: sortTodosForDisplay(items) };
       try { localStorage.setItem("diary-draft-todos", JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
@@ -962,6 +1527,62 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     void loadMonthFlow(selectedDate);
   }, [selectedDate, loadData, loadMonthFlow]); // user/드래프트 변경 시 함수가 바뀌면 자동 반영
 
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase.channel(`diary-sync-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "journal_entries",
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload: { new: unknown; old: unknown }) => {
+          const row = (payload.new as Partial<JournalRow>) || (payload.old as Partial<JournalRow>) || null;
+          const changedDate = row?.entry_date;
+          if (!changedDate) return;
+          void handleRemoteChange("journal", changedDate);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "todos",
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload: { new: unknown; old: unknown }) => {
+          const row = (payload.new as Partial<UiTodo>) || (payload.old as Partial<UiTodo>) || null;
+          const changedDate = row?.due_date;
+          if (!changedDate) return;
+          void handleRemoteChange("todo", changedDate);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "daily_activities",
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload: { new: unknown; old: unknown }) => {
+          const row = (payload.new as Partial<DailyActivityRow>) || (payload.old as Partial<DailyActivityRow>) || null;
+          const changedDate = row?.activity_date;
+          if (!changedDate) return;
+          void handleRemoteChange("activity", changedDate);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [user, handleRemoteChange]);
+
   const makeLocalTodoId = () => {
     if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
       return (crypto as Crypto).randomUUID();
@@ -972,11 +1593,17 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
 /** 할 일 체크/해제 토글 (Optimistic UI: 즉시 반영 후 에러 시 롤백) */
   const toggleTodo = async (todo: UiTodo) => {
     const optimistic = todos.map((item) => (item.id === todo.id ? { ...item, done: !item.done } : item));
-    setTodos(optimistic);
+    setTodos(sortTodosForDisplay(optimistic));
     setTodoError("");
+    setIsTodoDirty(true);
+
+    if (await hasSyncConflictForSave("todo", selectedDate)) {
+      return;
+    }
 
     if (!user) {
       updateDraftTodo(optimistic);
+      setIsTodoDirty(false);
       return;
     }
 
@@ -986,12 +1613,26 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       .eq("id", todo.id);
 
     if (error) {
-      setTodos(todos); // 롤백
-      setTodoError(error.message);
+      if (!shouldIgnoreSupabaseSchemaError(error.message)) {
+        setTodos(sortTodosForDisplay(todos)); // 롤백
+      }
+      setTodoError(getSafeSupabaseError(error.message));
+      setIsTodoDirty(false);
+      return;
     }
+    setIsTodoDirty(false);
   };
 
   /** 새 To-do 즉시 추가 */
+  const toggleTodoRepeatDay = (dayValue: number) => {
+    if (!canTodoRepeat) return;
+    setTodoRepeatDays((prev) => {
+      const exists = prev.includes(dayValue);
+      const next = exists ? prev.filter((value) => value !== dayValue) : [...prev, dayValue];
+      return next.sort((a, b) => a - b);
+    });
+  };
+
   const addTodo = async () => {
     const title = newTodoTitle.trim();
     if (!title) {
@@ -999,22 +1640,113 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       return;
     }
     setTodoError("");
+    const normalizedRepeatWeeks = TODO_REPEAT_WEEKS.includes(todoRepeatWeeks) ? todoRepeatWeeks : TODO_REPEAT_WEEKS[1] ?? 1;
+    const repeatDays = canTodoRepeat ? todoRepeatDays : [];
+    const repeatDates = repeatDays.length > 0
+      ? buildTodoRepeatDates(selectedDate, repeatDays, normalizedRepeatWeeks)
+      : [selectedDate];
 
-    const next = [
-      {
-        id: makeLocalTodoId(),
-        due_date: selectedDate,
-        title,
-        done: false
-      },
-      ...todos
-    ];
-    setTodos(next);
+    const currentSelectedTasks = sortTodosForDisplay(todos);
+    const baseTodo: UiTodo = {
+      id: makeLocalTodoId(),
+      due_date: selectedDate,
+      title,
+      done: false
+    };
+    const nextTodos = currentSelectedTasks.some((item) => item.title === title)
+      ? currentSelectedTasks
+      : sortTodosForDisplay([baseTodo, ...currentSelectedTasks]);
+    setTodos(nextTodos);
     setNewTodoTitle("");
     setIsAddingTodo(false);
+    setIsTodoDirty(true);
 
     if (isGuest) {
-      updateDraftTodo(next);
+      const nextDraft = { ...draftTodosByDate };
+      const uniqueDates = Array.from(new Set(repeatDates)).sort();
+      uniqueDates.forEach((date) => {
+        const nextDateTaskId = makeLocalTodoId();
+        const currentList = [...(nextDraft[date] ?? [])];
+        const exists = currentList.some((item) => item.title === title);
+        if (!exists) {
+          currentList.unshift({
+            id: nextDateTaskId,
+            due_date: date,
+            title,
+            done: false
+          });
+        }
+        nextDraft[date] = sortTodosForDisplay(currentList);
+      });
+
+      setDraftTodosByDate(nextDraft);
+      try { localStorage.setItem("diary-draft-todos", JSON.stringify(nextDraft)); } catch { /* no-op */ }
+      setTodos(nextDraft[selectedDate] ?? []);
+      setIsTodoDirty(false);
+      return;
+    }
+
+    if (repeatDates.length > 1) {
+      const conflict = await hasSyncConflictForSave("todo", selectedDate);
+      if (conflict) {
+        setIsTodoDirty(false);
+        return;
+      }
+
+      const existingByDate = new Map<string, Set<string>>();
+      const { data: existingRows, error: existingError } = await supabase
+        .from("todos")
+        .select("due_date,title")
+        .eq("user_id", user.id)
+        .in("due_date", repeatDates);
+
+      if (existingError) {
+        setTodoError(getSafeSupabaseError(existingError.message));
+        await loadData(selectedDate);
+        setIsTodoDirty(false);
+        return;
+      }
+
+      (existingRows ?? []).forEach((row) => {
+        const bucket = existingByDate.get(row.due_date) ?? new Set<string>();
+        bucket.add(row.title);
+        existingByDate.set(row.due_date, bucket);
+      });
+
+      const uniqueDates = Array.from(new Set(repeatDates));
+      const rowsToInsert = uniqueDates
+        .filter((date) => !((existingByDate.get(date) ?? new Set<string>()).has(title)))
+        .map((date) => ({
+          user_id: user.id,
+          due_date: date,
+          title,
+          done: false
+        }));
+
+      if (rowsToInsert.length === 0) {
+        setTodoError("");
+        setIsTodoDirty(false);
+        await loadMonthFlow(selectedDate);
+        return;
+      }
+
+      const { error } = await supabase.from("todos").insert(rowsToInsert);
+      if (error) {
+        setTodoError(getSafeSupabaseError(error.message));
+        await loadData(selectedDate);
+        setIsTodoDirty(false);
+        return;
+      }
+
+      setIsTodoDirty(false);
+      await loadData(selectedDate);
+      await loadMonthFlow(selectedDate);
+      return;
+    }
+
+    const hasConflict = await hasSyncConflictForSave("todo", selectedDate);
+    if (hasConflict) {
+      setIsTodoDirty(false);
       return;
     }
 
@@ -1025,11 +1757,16 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       done: false
     });
     if (error) {
-      setTodoError(error.message);
+      setTodoError(getSafeSupabaseError(error.message));
       await loadData(selectedDate);
+      await loadMonthFlow(selectedDate);
+      setIsTodoDirty(false);
       return;
     }
+    setIsTodoDirty(false);
     await loadData(selectedDate);
+    await loadMonthFlow(selectedDate);
+    return;
   };
 
   /** 일기 저장 (upsert: 있으면 수정, 없으면 삽입) */
@@ -1042,6 +1779,14 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
 
     setIsSavingJournal(true);
     setJournalError("");
+    setIsJournalDirty(true);
+
+    const hasConflict = await hasSyncConflictForSave("journal", selectedDate);
+    if (hasConflict) {
+      setIsSavingJournal(false);
+      return;
+    }
+
     const { error } = await supabase.from("journal_entries").upsert(
       {
         user_id: user.id,
@@ -1055,9 +1800,11 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
 
     setIsSavingJournal(false);
     if (error) {
-      setJournalError(error.message);
+      setJournalError(getSafeSupabaseError(error.message));
+      setIsJournalDirty(false);
       return;
     }
+    setIsJournalDirty(false);
     await loadData(selectedDate);
   };
 
@@ -1108,6 +1855,13 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     nextEndTime?: string
   ) => {
     if (!user) return;
+    setIsActivityDirty(true);
+
+    const hasConflict = await hasSyncConflictForSave("activity", selectedDate);
+    if (hasConflict) {
+      return;
+    }
+
     const hours = normalizeActivityHours(nextHours);
     const label = trimActivityLabel(nextLabel);
     const startTime = formatStartTime(nextStartTime);
@@ -1116,9 +1870,15 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     if (hours <= 0) {
       const { error } = await supabase.from("daily_activities").delete().eq("user_id", user.id).eq("activity_date", selectedDate).eq("emoji", emoji);
       if (error) {
-        setActivityError(error.message);
+        setActivityError(getSafeSupabaseError(error.message));
+        if (shouldIgnoreSupabaseSchemaError(error.message)) {
+          setIsActivityDirty(false);
+          return;
+        }
         await loadData(selectedDate);
+        setIsActivityDirty(false);
       }
+      setIsActivityDirty(false);
       return;
     }
 
@@ -1130,8 +1890,13 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       .eq("emoji", emoji);
 
     if (cleanupError.error) {
-      setActivityError(cleanupError.error.message);
+      setActivityError(getSafeSupabaseError(cleanupError.error.message));
+      if (shouldIgnoreSupabaseSchemaError(cleanupError.error.message)) {
+        setIsActivityDirty(false);
+        return;
+      }
       await loadData(selectedDate);
+      setIsActivityDirty(false);
       return;
     }
 
@@ -1150,17 +1915,25 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       }
     );
     if (error) {
-      setActivityError(error.message);
+      setActivityError(getSafeSupabaseError(error.message));
+      if (shouldIgnoreSupabaseSchemaError(error.message)) {
+        setIsActivityDirty(false);
+        return;
+      }
       await loadData(selectedDate);
+      setIsActivityDirty(false);
     }
+    setIsActivityDirty(false);
   };
 
   /** 활동 시간 갱신 (로컬 state + 로그인 시 DB 저장) */
 const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, nextStartTime?: string, nextEndTime?: string) => {
     const updated = composeUpdatedActivities(emoji, nextHours, nextLabel, nextStartTime, nextEndTime);
     setActivities(updated);
+    setIsActivityDirty(true);
     if (!user) {
       updateDraftActivities(updated);
+      setIsActivityDirty(false);
       return;
     }
     const source = activities.find((item) => item.emoji === emoji);
@@ -1232,6 +2005,59 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     }));
   };
 
+  const addTemplateActivity = (template: ActivityTemplate) => {
+    const keyItem = activities.find((item) => item.emoji === template.emoji);
+    const startTime = normalizeStartTimeInput(template.startTime ?? "00:00");
+    const calculatedEndTime = calculateEndTimeFromHours(startTime, template.hours) ?? "00:00";
+    const endTime = normalizeStartTimeInput(template.endTime ?? calculatedEndTime);
+    updateActivity(
+      template.emoji,
+      keyItem ? keyItem.hours + template.hours : template.hours,
+      template.label,
+      startTime,
+      endTime
+    );
+    setActivityLabelEditingByDate((prev) => ({
+      ...prev,
+      [template.emoji]: Boolean(template.label)
+    }));
+  };
+
+  const addTemplate = () => {
+    if (!canUseTemplates) return;
+    const emoji = customEmoji.trim();
+    if (!emoji) {
+      setActivityError("Please enter an emoji.");
+      return;
+    }
+
+    const parsed = parseActivityDurationInput(customHours);
+    if (!parsed || parsed.hours <= 0) {
+      setActivityError("Invalid duration format. Use hours/minutes or HH:MM - HH:MM.");
+      return;
+    }
+
+    const startTime = parsed.startTime ?? customStartTime;
+    const endTime = parsed.endTime ?? calculateEndTimeFromHours(startTime, parsed.hours) ?? "00:00";
+    const name = customTemplateName.trim() || `${emoji} ${formatHoursLabel(parsed.hours)}`;
+    const nextTemplate: ActivityTemplate = {
+      id: makeLocalTodoId(),
+      name,
+      emoji,
+      hours: normalizeHourInput(parsed.hours),
+      label: "",
+      startTime: normalizeStartTimeInput(startTime),
+      endTime: normalizeStartTimeInput(endTime)
+    };
+    setActivityTemplates((prev) => [nextTemplate, ...prev]);
+    setCustomTemplateName("Default");
+    setActivityError("");
+  };
+
+  const removeActivityTemplate = (templateId: string) => {
+    setActivityTemplates((prev) => prev.filter((item) => item.id !== templateId));
+  };
+
   /** 사용자 입력 이모지+시간으로 활동 추가 */
   const addCustomActivity = async () => {
     const emoji = customEmoji.trim();
@@ -1275,10 +2101,12 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   const removeActivity = async (activity: UiActivity) => {
     const updated = activities.filter((item) => item.emoji !== activity.emoji);
     setActivities(updated);
+    setIsActivityDirty(true);
     if (user) {
       await saveActivity(activity.emoji, 0, activity.label, activity.startTime ?? "00:00", activity.endTime);
     } else {
       updateDraftActivities(updated);
+      setIsActivityDirty(false);
     }
   };
 
@@ -1286,15 +2114,18 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     const cleanLabel = trimActivityLabel(nextLabel);
     const updated = activities.map((item) => (item.emoji === emoji ? { ...item, label: cleanLabel } : item));
     setActivities(updated);
+    setIsActivityDirty(true);
     if (user) {
       return;
     }
     updateDraftActivities(updated);
+    setIsActivityDirty(false);
   };
 
   const commitActivityLabel = (activity: UiActivity, nextLabel: string) => {
     const cleanLabel = trimActivityLabel(nextLabel);
     updateActivityLabel(activity.emoji, cleanLabel);
+    setIsActivityDirty(true);
     if (user) {
       void saveActivity(activity.emoji, activity.hours, cleanLabel, activity.startTime ?? "00:00", activity.endTime);
     }
@@ -1374,6 +2205,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   const handleJournalChange = (value: string) => {
     const next = value.slice(0, NOTE_CHAR_LIMIT);
     setJournalText(next);
+    setIsJournalDirty(true);
     if (isGuest) {
       updateDraftJournal(next);
     }
@@ -1398,13 +2230,35 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     });
   }, [activities]);
 
+  useEffect(() => {
+    setActivityConflictWarnings(buildActivityConflictWarnings(activities));
+  }, [activities]);
+
   const signOut = async () => {
     if (!session) return;
     await supabase.auth.signOut();
   };
+  const syncConflictMessage = syncConflict
+    ? buildSyncConflictMessage(syncConflict.scope, syncConflict.date)
+    : null;
 
   return (
     <main className="flex min-h-screen w-full flex-col">
+      {syncConflictMessage ? (
+        <div className="mx-auto mt-3 w-full max-w-5xl px-4">
+          <div className="flex flex-col gap-2 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-3 py-2 text-xs text-[var(--danger)] sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <p>{syncConflictMessage}</p>
+            <div className="flex shrink-0 gap-2">
+              <button onClick={() => void resolveSyncConflict()} className="rounded-md border border-[var(--danger)] px-2 py-1 text-[10px] font-semibold">
+                Reload now
+              </button>
+              <button onClick={cancelSyncConflict} className="rounded-md border border-[var(--danger)] px-2 py-1 text-[10px] font-semibold opacity-85">
+                Keep editing
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
           {/* ── Page Header ── */}
       <header className="n-page-header fade-in">
@@ -1429,7 +2283,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
         {/* ── Left Sidebar: Calendar + Monthly Flow ── */}
         <aside className="w-full shrink-0 lg:sticky lg:top-6 lg:w-60">
-
           {/* Activity summary (read-only) */}
           <div className="fade-up rounded-lg border border-[var(--border)] p-3">
             <p className="mb-1.5 text-xs leading-5 font-medium text-[var(--ink)]">{prettyDateLabel(selectedDate)}</p>
@@ -1437,7 +2290,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
             {activities.length === 0 ? (
               <p className="break-words text-xs leading-5 text-[var(--ink)]">No records yet</p>
             ) : (
-              <div className="grid gap-1">
+              <div className="grid gap-1 max-h-56 overflow-y-auto pr-1">
                 {activities
                   .slice()
                   .sort((a, b) => a.emoji.localeCompare(b.emoji))
@@ -1547,8 +2400,24 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               {todoError && <p className="px-3 py-2 text-xs text-[var(--danger)]">{todoError}</p>}
               {isAddingTodo ? (
                 <div className="px-3 py-3">
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {[...userSymbols]
+                      .sort((a, b) => a.order - b.order)
+                      .map((symbol) => (
+                        <button
+                          key={symbol.emoji}
+                          type="button"
+                          onClick={() => appendSymbolToTodo(symbol.emoji)}
+                          className="n-btn-ghost n-h2 h-7 w-7 shrink-0 p-0"
+                          title={symbol.label ? `${symbol.emoji} ${symbol.label}` : `${symbol.emoji}`}
+                        >
+                          {symbol.emoji}
+                        </button>
+                      ))}
+                  </div>
                   <div className="flex gap-2">
                     <input
+                      ref={todoInputRef}
                       value={newTodoTitle}
                       onChange={(e) => setNewTodoTitle(e.target.value)}
                       onKeyDown={(e) => {
@@ -1567,11 +2436,52 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       onClick={() => {
                         setIsAddingTodo(false);
                         setNewTodoTitle("");
+                        setTodoRepeatDays([]);
+                        setTodoRepeatWeeks(TODO_REPEAT_WEEKS[1] ?? 1);
                       }}
                       className="n-btn-ghost shrink-0"
                     >
                       Cancel
                     </button>
+                  </div>
+                  <div className="mt-2 rounded-lg border border-[var(--border)] p-2">
+                    <p className="mb-1.5 text-xs text-[var(--muted)]">Repeat on</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {TODO_REPEAT_DAY_LABELS.map((entry) => {
+                        const active = todoRepeatDays.includes(entry.value);
+                        return (
+                          <button
+                            key={entry.value}
+                            type="button"
+                            onClick={() => toggleTodoRepeatDay(entry.value)}
+                            disabled={!canTodoRepeat}
+                            className={`rounded border px-2 py-1 text-xs ${
+                              active ? "border-[var(--primary)] bg-[var(--primary)]/12 text-[var(--primary)]" : "border-[var(--border)] text-[var(--ink)]"
+                            }`}
+                          >
+                            {entry.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-xs text-[var(--muted)]">for next</span>
+                      <select
+                        value={todoRepeatWeeks}
+                        onChange={(event) => setTodoRepeatWeeks(Number(event.target.value))}
+                        disabled={!canTodoRepeat}
+                        className="n-input h-7 w-16 px-2 py-1 text-xs"
+                      >
+                        {TODO_REPEAT_WEEKS.map((week) => (
+                          <option key={week} value={week}>
+                            {week}w
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {!canTodoRepeat ? (
+                      <p className="mt-1 text-xs text-[var(--muted)]">Repeat scheduling is available on Pro.</p>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -1602,6 +2512,15 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
                 <span className="n-h2">Activity Log</span>
                 <span className="n-label normal-case tracking-normal">Hours</span>
+                {canUseTemplates ? (
+                  <button
+                    onClick={() => setIsTemplatePanelOpen((prev) => !prev)}
+                    className="ml-2 inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/12 px-2 py-1 text-xs font-semibold text-[var(--primary)]"
+                    aria-label="Toggle activity templates"
+                  >
+                    Templates
+                  </button>
+                ) : null}
                 <button
                   onClick={() => setIsSymbolPickerOpen((prev) => !prev)}
                   className="ml-auto inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/12 px-2 py-1 text-xs font-semibold text-[var(--primary)]"
@@ -1619,6 +2538,13 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 >
                   <Settings className="h-4 w-4" />
                 </button>
+                <input
+                  value={activityLogQuery}
+                  onChange={(e) => setActivityLogQuery(e.target.value)}
+                  className="n-input ml-2 w-28 px-2 py-1.5 text-xs"
+                  placeholder="Filter"
+                  aria-label="Filter activity log"
+                />
               </div>
 
               {isActivityStepPickerOpen ? (
@@ -1646,32 +2572,34 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     </div>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {ACTIVITY_STEP_OPTIONS.map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => setActivityStepMinutesValue(option)}
-                        className={`rounded border px-2 py-1 text-xs transition ${
+                {ACTIVITY_STEP_OPTIONS.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setActivityStepMinutesValue(option)}
+                    className={`rounded border px-2 py-1 text-xs transition ${
                           option === activityStepMinutes
                             ? "border-[var(--primary)] bg-[var(--primary)]/12 text-[var(--primary)]"
                             : "border-[var(--border)] text-[var(--ink)] hover:bg-[var(--bg-hover)]"
                         }`}
                       >
-                        {option}m
-                      </button>
-                    ))}
+                      {option}m
+                    </button>
+                  ))}
                   </div>
                 </div>
               ) : null}
 
               {/* ── Symbol Picker Panel ── */}
-              {isSymbolPickerOpen && (
+                {isSymbolPickerOpen && (
                 <div className="border-b border-[var(--border)] bg-[var(--bg-secondary)]">
                   <SymbolPicker
                     currentSymbols={userSymbols}
+                    maxSymbols={symbolLimit}
+                    labelCharacterLimit={planLimits.labelCharacterLimit}
                     onSymbolsChange={(updated) => {
                       setUserSymbols(updated);
-                      saveUserSymbols(updated);
+                      saveUserSymbols(updated, symbolPlan, planLimits.symbolLimit);
                     }}
                     onClose={() => setIsSymbolPickerOpen(false)}
                   />
@@ -1741,7 +2669,57 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       Add
                     </button>
                   </div>
+                  {canUseTemplates ? (
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        value={customTemplateName}
+                        onChange={(e) => setCustomTemplateName(e.target.value.slice(0, 20))}
+                        className="n-input flex-1"
+                        placeholder="Template name"
+                        aria-label="Template name"
+                      />
+                      <button onClick={() => addTemplate()} className="n-btn-ghost shrink-0">
+                        Save as template
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
+
+                {isTemplatePanelOpen && canUseTemplates ? (
+                  <div className="border-b border-[var(--border)] px-3 py-3">
+                    <p className="mb-2 text-xs leading-5 font-semibold text-[var(--ink)]">Templates</p>
+                    {activeTemplateItems.length === 0 ? (
+                      <p className="text-xs leading-5 text-[var(--muted)]">No templates yet.</p>
+                    ) : (
+                      <div className="grid gap-1.5">
+                        {activeTemplateItems.map((template) => (
+                          <div
+                            key={template.id}
+                            className="flex items-center gap-2 rounded border border-[var(--border)] px-2 py-1.5"
+                          >
+                            <button
+                              onClick={() => addTemplateActivity(template)}
+                              className="flex-1 text-left text-xs leading-5 text-[var(--ink)]"
+                            >
+                              <span className="mr-2">{template.emoji}</span>
+                              <span className="font-semibold">{template.name}</span>
+                              <span className="ml-2 text-[var(--muted)]">
+                                {formatHoursLabel(template.hours)} [{template.startTime} - {template.endTime}]
+                              </span>
+                            </button>
+                            <button
+                              onClick={() => removeActivityTemplate(template.id)}
+                              className="n-btn-danger h-6 w-6 shrink-0 p-0 rounded-full"
+                              aria-label={`Remove ${template.name}`}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
 
               {/* 기록된 활동 */}
             <div
@@ -1755,9 +2733,9 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               }}
               onContextMenu={(event) => event.preventDefault()}
             >
-              {activities.length > 0 ? (
+              {filteredActivities.length > 0 ? (
                 <div className="grid divide-y divide-[var(--border)]">
-                  {activities.map((activity) => (
+                  {filteredActivities.map((activity) => (
                       <div
                         key={activity.emoji}
                         className="px-0 py-1.5 cursor-grab active:cursor-grabbing"
@@ -1798,7 +2776,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           />
                           <span className="text-xs text-[var(--muted)]">–</span>
                           <TimeInput
-                            value={activity.endTime ?? "00:00"}
+                            value={getEffectiveEndTime(activity)}
                             onCommit={(v) => setActivityEndTime(activity, v)}
                             ariaLabel="Activity end time"
                           />
@@ -1829,9 +2807,9 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                                 event.preventDefault();
                                 startActivityLabelEdit(activity);
                               }}
-                              className="flex w-full items-center gap-2 rounded-md border border-transparent px-1 py-0.5 text-left text-xs leading-5 text-[var(--muted)] hover:bg-[var(--bg-hover)]"
+                              className="flex w-full items-start gap-2 rounded-md border border-transparent px-1 py-0.5 text-left text-xs leading-5 hover:bg-[var(--bg-hover)]"
                             >
-                              <span className="min-w-0 flex-1 truncate">
+                              <span className={`min-w-0 flex-1 break-all whitespace-pre-wrap ${activity.label ? "text-[var(--ink)]" : "text-[var(--muted)]"}`}>
                                 {activity.label ? activity.label : "Tap to add note..."}
                               </span>
                               {activity.label && (
@@ -1847,11 +2825,18 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                             </div>
                           )}
                         </div>
+                        {activityConflictWarnings[activity.emoji] ? (
+                          <p className="px-3 pt-1 text-xs text-[var(--danger)]" style={{ paddingLeft: "2.25rem" }}>
+                            {activityConflictWarnings[activity.emoji]}
+                          </p>
+                        ) : null}
                       </div>
                     ))}
-                  </div>
-                ) : (
-                  <p className="break-words text-xs leading-5 text-[var(--ink)]">Tap an emoji to log activity.</p>
+                </div>
+              ) : (
+                <p className="break-words px-3 py-2 text-xs leading-5 text-[var(--ink)]">
+                  {normalizedActivityLogQuery ? "No matches in activity log." : "Tap an emoji to log activity."}
+                </p>
                 )}
                 {activityContextMenu ? (
                   <div
@@ -1990,8 +2975,61 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   </button>
                 </div>
               </div>
+              {canSearchSummary ? (
+                <div className="border-b border-[var(--border)] px-3 py-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted)]" />
+                    <input
+                      value={dashboardQuery}
+                      onChange={(e) => setDashboardQuery(e.target.value)}
+                      className="n-input w-full pl-8"
+                      placeholder="Search emoji or label in summary"
+                      aria-label="Search summary"
+                    />
+                  </div>
+                </div>
+              ) : null}
               {monthError && <p className="px-3 pb-2 text-xs text-[var(--danger)]">{monthError}</p>}
               <div className="px-3 pb-3 max-h-[640px] overflow-y-auto">
+                {hasAdvancedSummary ? (
+                  <>
+                    <div className="mb-3 grid gap-2 rounded-lg border border-[var(--border)] p-2 sm:grid-cols-4">
+                      <div className="rounded-md border border-[var(--border)] p-2">
+                        <p className="text-xs text-[var(--muted)]">Total hours</p>
+                        <p className="text-base font-semibold text-[var(--ink)]">{formatHoursLabel(dashboardTotalHours)}</p>
+                      </div>
+                      <div className="rounded-md border border-[var(--border)] p-2">
+                        <p className="text-xs text-[var(--muted)]">Active days</p>
+                        <p className="text-base font-semibold text-[var(--ink)]">
+                          {dashboardActiveDays} / {displayedDays.length}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-[var(--border)] p-2">
+                        <p className="text-xs text-[var(--muted)]">Longest streak</p>
+                        <p className="text-base font-semibold text-[var(--ink)]">{dashboardLongestStreak}</p>
+                      </div>
+                      <div className="rounded-md border border-[var(--border)] p-2">
+                        <p className="text-xs text-[var(--muted)]">Rest day ratio</p>
+                        <p className="text-base font-semibold text-[var(--ink)]">{dashboardRestDayRatio}%</p>
+                      </div>
+                    </div>
+                    {topThreeActivities.length > 0 ? (
+                      <div className="mb-3 rounded-lg border border-[var(--border)] p-2">
+                        <p className="mb-2 text-xs text-[var(--muted)]">Top 3 activities</p>
+                        <div className="grid gap-1">
+                          {topThreeActivities.map((item) => (
+                            <div key={item.emoji} className="flex items-center justify-between gap-2 text-xs">
+                              <span className="text-[var(--ink)]">
+                                {item.emoji} {item.label ? `- ${item.label}` : ""}
+                              </span>
+                              <span className="text-[var(--ink)] font-semibold">{formatHoursLabel(item.hours)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
                 <div className="grid gap-3">
                   {displayedDays.map((day) => {
                     const rowActivities = monthActivitiesByDate[day] ?? [];
@@ -2082,17 +3120,20 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               </div>
               <div className="border-t border-[var(--border)] px-3 py-3">
                 <p className="mb-2 text-xs leading-5 font-medium text-[var(--ink)]">{displayedSummaryLabel}</p>
-                {summaryActivities.length === 0 ? (
+                {filteredSummaryActivities.length === 0 ? (
                   <p className="text-[11px] leading-5 text-[var(--muted)]">{displayedSummaryEmptyText}</p>
                 ) : (
                   <div className="grid gap-1">
-                    {summaryActivities.map((item) => (
+                    {filteredSummaryActivities.map((item) => (
                       <div
                         key={item.emoji}
                         className="grid min-w-0 items-start gap-2"
-                        style={{ gridTemplateColumns: "1.25rem 1fr" }}
+                        style={{ gridTemplateColumns: "1.25rem minmax(0, 1fr) auto" }}
                       >
                         <span className="text-base leading-5">{item.emoji}</span>
+                        <span className="min-w-0 break-words text-[11px] leading-5 text-[var(--muted)]">
+                          {item.label ? `- ${item.label}` : ""}
+                        </span>
                         <span className="text-right text-[11px] leading-5 text-[var(--ink)] whitespace-nowrap">{formatHoursLabel(item.hours)}</span>
                       </div>
                     ))}

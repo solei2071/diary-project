@@ -7,7 +7,7 @@
 "use client";
 
 import { type FormEvent, useState } from "react";
-import { Mail, MailCheck, Send } from "lucide-react";
+import { ArrowRight, Mail, MailCheck, Send } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 /** Props 타입 — optional 속성으로 다양한 사용처 대응 */
@@ -49,7 +49,7 @@ export default function AuthPanel({
       options: { emailRedirectTo: redirectTo }
     });
 
-  if (signInError) {
+    if (signInError) {
       setError(signInError.message);
     } else {
       // mode에 따라 다른 성공 메시지 표시
@@ -63,78 +63,97 @@ export default function AuthPanel({
     setIsLoading(false);
   };
 
+  const isSignup = mode === "signup";
   const wrapperClass = compact
-    ? "w-full max-w-sm rounded-3xl border border-white/45 bg-white/95 p-4 shadow-card card-enter backdrop-blur"
+    ? "w-full max-w-md rounded-[1.75rem] border border-[var(--border)] bg-[var(--bg)]/95 p-0 shadow-2xl shadow-black/10 backdrop-blur-2xl"
     : "mx-auto flex min-h-screen w-full max-w-3xl items-center justify-center px-5 py-14";
-
-  const submitLabel = mode === "signup" ? "회원가입 링크 받기" : "로그인 링크 받기";
+  const submitLabel = isSignup ? "회원가입 링크 받기" : "로그인 링크 받기";
+  const heading = isSignup ? "회원가입" : "로그인";
+  const helperText = isSignup ? "회원가입용 인증 메일을 받아 시작하세요." : "날짜별 기록을 저장하려면 이메일 인증이 필요해요.";
 
   return (
     <section className={wrapperClass}>
-      {onClose && (
-        <button
-          type="button"
-          onClick={onClose}
-          className="mb-3 inline-flex self-end rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600"
-        >
-          닫기
-        </button>
-      )}
-      <form
-        onSubmit={sendMagicLink}
-        className="w-full rounded-2xl bg-white/90"
-      >
-        <div className="mb-4 flex items-center gap-2">
-          <div className="grid h-10 w-10 place-items-center rounded-full bg-[#edf0ff] text-[#373fda]">
-            <MailCheck className="h-5 w-5" />
+      <div className="p-4 sm:p-6">
+        {onClose && (
+          <div className="mb-2 flex justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-light)] transition-colors hover:bg-[var(--bg-hover)]"
+            >
+              닫기
+            </button>
           </div>
-          <h1 className="text-2xl font-black tracking-tight text-ink">Daily Flow Diary</h1>
-        </div>
-        <p className="mb-6 text-sm leading-6 text-slate-600">
-          {description ??
-            (mode === "signup"
-              ? "회원가입용 인증 메일을 보내드려요."
-              : "날짜별 To-do와 회고를 기록하고, 필요할 때만 안전하게 저장할 수 있어요.")}
-        </p>
+        )}
 
-        <label className="mb-3 block text-sm font-semibold text-[var(--ink)]">
-          이메일 주소
-        </label>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch">
-          <div className="relative flex-1">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted)] pointer-events-none">
-              <Mail className="h-5 w-5" />
-            </span>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
-              autoComplete="email"
-              className="n-input w-full pl-12 pr-4 py-3.5 text-base rounded-xl placeholder:text-[var(--muted)]"
-              placeholder="예: hello@example.com"
-            />
+        <form onSubmit={sendMagicLink} className="w-full overflow-hidden rounded-[1.5rem] bg-[var(--bg)]">
+          <div className="relative overflow-hidden border-b border-[var(--border)] px-6 py-8">
+            <div className="absolute -top-8 right-0 h-28 w-28 rounded-full bg-[var(--primary)]/12 blur-3xl" />
+            <div className="relative flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-full bg-[var(--primary)]/15 text-[var(--primary)]">
+                <MailCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">Daily Flow</p>
+                <h1 className="text-2xl font-black text-[var(--ink)]">{heading}</h1>
+                <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{helperText}</p>
+              </div>
+            </div>
           </div>
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="n-btn-primary shrink-0 flex items-center justify-center gap-2 px-6 py-3.5 text-base font-semibold rounded-xl disabled:cursor-not-allowed disabled:opacity-60 min-w-[140px] sm:min-w-[160px]"
-          >
-            {isLoading ? (
-              <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                전송 중...
-              </>
-            ) : (
-              <>
-                <Send className="h-4 w-4" />
-                {submitLabel}
-              </>
-            )}
-          </button>
-        </div>
-        {error && <p className="mt-3 text-sm font-semibold text-red-600">{error}</p>}
-        {message && <p className="mt-3 text-sm font-semibold text-emerald-600">{message}</p>}
-      </form>
+
+          <div className="px-6 py-6">
+            <p className="mb-5 text-sm leading-6 text-[var(--ink-light)]">
+              {description ??
+                (isSignup ? "회원가입용 인증 메일을 보내드려요." : "날짜별 To-do와 회고를 기록하고, 필요할 때만 안전하게 저장할 수 있어요.")}
+            </p>
+
+            <label className="mb-2 block text-xs font-semibold tracking-wide text-[var(--muted)]">
+              EMAIL ADDRESS
+            </label>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+              <div className="relative flex-1">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted)] pointer-events-none">
+                  <Mail className="h-5 w-5" />
+                </span>
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  type="email"
+                  autoComplete="email"
+                  className="n-input w-full rounded-xl border-[var(--border)] bg-[var(--bg)] pl-12 pr-4 py-3.5 text-base placeholder:text-[var(--muted)]"
+                  placeholder="name@example.com"
+                  aria-label="Email"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="n-btn-primary min-h-[50px] shrink-0 rounded-xl px-5 text-sm font-semibold tracking-wide shadow-sm disabled:cursor-not-allowed disabled:opacity-60 sm:min-w-[160px]"
+              >
+                {isLoading ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    전송 중
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4" />
+                    {submitLabel}
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </>
+                )}
+              </button>
+            </div>
+
+            {error && <p className="mt-3 text-sm font-semibold text-[var(--danger)]">{error}</p>}
+            {message && <p className="mt-3 text-sm font-semibold text-[var(--success)]">{message}</p>}
+
+            <p className="mt-4 rounded-lg border border-dashed border-[var(--border)] bg-[var(--bg-secondary)]/50 px-3 py-2 text-xs leading-5 text-[var(--muted)]">
+              메일 링크는 수신함에서 빠르게 확인해주세요. 개인 정보 유출을 막기 위해 링크는 안전하게 사용됩니다.
+            </p>
+          </div>
+        </form>
+      </div>
     </section>
   );
 }

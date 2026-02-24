@@ -7,6 +7,7 @@
  */
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import PwaManager from "@/components/PwaManager";
 
 // 메타데이터: SEO, Open Graph, PWA 등에 사용 (서버에서 head에 주입됨)
 export const metadata: Metadata = {
@@ -15,8 +16,8 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest", // PWA 매니페스트
   icons: {
     icon: [
-      { url: "/icon.svg", sizes: "192x192", type: "image/svg+xml" },
-      { url: "/icon.svg", sizes: "512x512", type: "image/svg+xml" }
+    { url: "/icon.svg", sizes: "192x192", type: "image/svg+xml" },
+    { url: "/icon.svg", sizes: "512x512", type: "image/svg+xml" }
     ],
     apple: "/icon.svg",
     shortcut: "/icon.svg"
@@ -29,7 +30,9 @@ export const metadata: Metadata = {
   },
   other: {
     "apple-mobile-web-app-capable": "yes",
-    "mobile-web-app-capable": "yes"
+    "mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-title": "Daily Diary",
+    "format-detection": "telephone=no"
   }
 };
 
@@ -39,7 +42,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover", // 노치/섬 유형 기기에서 전체 화면 사용
-  themeColor: "#ffffff"
+  themeColor: "#2383e2"
 };
 
 /** 루트 레이아웃 — children에 page.tsx 등 하위 페이지가 렌더됨 */
@@ -50,7 +53,10 @@ export default function RootLayout({
     <html lang="en">
       <body className="antialiased ios-safe-root">
         {/* notion-shell: globals.css에 정의된 Notion-style 최대 너비/패딩 래퍼 (최대 1100px) */}
-        <div className="notion-shell">{children}</div>
+        <div className="notion-shell">
+          <PwaManager />
+          {children}
+        </div>
       </body>
     </html>
   );
