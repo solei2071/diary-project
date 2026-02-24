@@ -85,7 +85,10 @@ export default function Home() {
   return (
     <div className="relative">
       {/* 상단 고정 헤더: 로그인 시 이메일, 비로그인 시 로그인/회원가입 탭 */}
-      <section className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--bg)] px-4 py-3 backdrop-blur">
+      <section
+        className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--bg)] px-4 py-3 backdrop-blur"
+        style={{ paddingTop: "max(0.75rem, var(--safe-top))" }}
+      >
         <div
           className="mx-auto flex w-full max-w-5xl items-center justify-between overflow-visible rounded-full border border-[var(--border)] bg-[var(--bg)] px-1"
         >

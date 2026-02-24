@@ -11,13 +11,25 @@ import "./globals.css";
 // 메타데이터: SEO, Open Graph, PWA 등에 사용 (서버에서 head에 주입됨)
 export const metadata: Metadata = {
   title: "Daily Flow Diary",
-  description: "날짜별 할 일과 내가 한 일을 한곳에서 관리하는 다이어리",
+  description: "Date-based to-do and activity diary",
   manifest: "/manifest.webmanifest", // PWA 매니페스트
+  icons: {
+    icon: [
+      { url: "/icon.svg", sizes: "192x192", type: "image/svg+xml" },
+      { url: "/icon.svg", sizes: "512x512", type: "image/svg+xml" }
+    ],
+    apple: "/icon.svg",
+    shortcut: "/icon.svg"
+  },
   applicationName: "Daily Flow Diary",
   appleWebApp: {
     capable: true, // iOS 웹앱으로 홈 화면에 추가 가능
-    statusBarStyle: "default",
+    statusBarStyle: "black-translucent",
     title: "Daily Flow Diary"
+  },
+  other: {
+    "apple-mobile-web-app-capable": "yes",
+    "mobile-web-app-capable": "yes"
   }
 };
 
@@ -35,8 +47,8 @@ export default function RootLayout({
   children
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ko">
-      <body className="antialiased">
+    <html lang="en">
+      <body className="antialiased ios-safe-root">
         {/* notion-shell: globals.css에 정의된 Notion-style 최대 너비/패딩 래퍼 (최대 1100px) */}
         <div className="notion-shell">{children}</div>
       </body>

@@ -75,6 +75,7 @@
 html,
 body {
   min-height: 100dvh;
+  height: 100%;
 }
 
 body {
@@ -85,6 +86,16 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   padding: var(--safe-top) var(--safe-right) 0 var(--safe-left);
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+
+*,
+*::before,
+*::after {
+  -webkit-tap-highlight-color: rgba(35, 131, 226, 0.18);
 }
 
 /* ─── Shell ─────────────────────────────────────────────── */
@@ -95,6 +106,26 @@ body {
   margin: 0 auto;
   padding: 0 max(1.5rem, var(--safe-left)) max(2rem, var(--safe-bottom))
     max(1.5rem, var(--safe-right));
+}
+
+/* iOS standalone web app (홈 화면 추가 후) padding 보정 */
+@media all and (display-mode: standalone) {
+  .ios-safe-root {
+    padding-top: var(--safe-top);
+  }
+
+  .notion-shell {
+    padding-bottom: max(1.5rem, calc(var(--safe-bottom) + 0.5rem));
+  }
+}
+
+@media (pointer: coarse) {
+  input,
+  textarea,
+  button,
+  select {
+    font-size: 16px;
+  }
 }
 
 @media (min-width: 768px) {
