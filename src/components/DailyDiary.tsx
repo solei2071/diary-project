@@ -579,6 +579,16 @@ export default function DailyDiary({ session, onRequestAuth }: Props) {
     return normalizeActivityHours(durationMinutes / 60);
   };
 
+  const calculateEndTimeFromHours = (startTime: string, hours: number) => {
+    const normalizedStart = parseClockTimeToMinutes(formatStartTime(startTime));
+    if (normalizedStart === null) {
+      return undefined;
+    }
+    const totalMinutes = normalizedStart + Math.max(0, Math.round(hours * 60));
+    const normalizedMinutes = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+    return formatMinutesToClock(normalizedMinutes);
+  };
+
 /** 같은 이모지의 여러 행을 합산해 하나의 UiActivity로 */
 const normalizeActivities = (rows: DailyActivityRow[]) =>
     Object.values(
@@ -1204,7 +1214,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     const hours = normalizeHourInput(parsed.hours);
     const keyItem = activities.find((item) => item.emoji === emoji);
     const startTime = parsed.startTime ?? customStartTime;
-    const endTime = parsed.endTime;
+    const endTime = parsed.endTime ?? calculateEndTimeFromHours(startTime, hours);
     if (startTime) {
       setCustomStartTime(startTime);
     }
