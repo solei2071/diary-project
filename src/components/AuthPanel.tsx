@@ -1,23 +1,22 @@
-/**
- * 인증 패널 컴포넌트 — 매직링크(이메일) 로그인/회원가입
- *
- * - signInWithOtp: 비밀번호 없이 이메일로 로그인 링크 발송
- * - 회원가입/로그인 모두 같은 플로우 (첫 로그인 시 자동 가입)
- */
 "use client";
 
 import { type FormEvent, useState } from "react";
-import { ArrowRight, Mail, MailCheck, Send, ShieldCheck } from "lucide-react";
+import { Apple, ArrowRight, Chrome, Linkedin, Lock, Mail } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-/** Props 타입 — optional 속성으로 다양한 사용처 대응 */
 type Props = {
-  compact?: boolean; // true면 모달용 작은 패널
-  mode?: "login" | "signup"; // 안내 문구만 다르게 표시
-  onEmailSent?: () => void; // 메일 발송 성공 시 콜백
-  description?: string; // 커스텀 설명 텍스트
-  onClose?: () => void; // 닫기 버튼 클릭 시 콜백
+  compact?: boolean;
+  mode?: "login" | "signup";
+  onEmailSent?: () => void;
+  description?: string;
+  onClose?: () => void;
 };
+
+const socialItems = [
+  { key: "google", label: "Google", provider: "google", icon: Chrome, colorClass: "text-blue-500" },
+  { key: "apple", label: "Apple", provider: "apple", icon: Apple, colorClass: "text-black dark:text-white" },
+  { key: "linkedin", label: "LinkedIn", provider: "linkedin_oidc", icon: Linkedin, colorClass: "text-sky-600" }
+];
 
 export default function AuthPanel({
   compact = false,
@@ -28,168 +27,219 @@ export default function AuthPanel({
 }: Props) {
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState(""); // 성공 메시지
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [rememberDevice, setRememberDevice] = useState(true);
+  const [socialLoadingKey, setSocialLoadingKey] = useState<string | null>(null);
 
-  /** 폼 제출: 매직링크 발송 (signInWithOtp) */
+  const isSignup = mode === "signup";
+  const title = isSignup ? "Create account" : "Welcome back";
+  const subtitle = isSignup
+    ? "Use your email to create your account with a secure link."
+    : "Please enter your email to sign in.";
+  const submitLabel = isSignup ? "Send sign up link" : "Send sign in link";
+  const helperCopy =
+    description ??
+    (isSignup
+      ? "No password required. We will email you a secure link."
+      : "No password required. We will send a secure sign-in link.");
+
+  const wrapperClass = compact
+    ? "w-full max-w-[440px] rounded-[2rem] border border-[var(--border)] bg-[var(--bg)]/95 p-0 shadow-2xl shadow-black/10 backdrop-blur-2xl"
+    : "mx-auto flex min-h-screen w-full max-w-3xl items-center justify-center px-5 py-14";
+
+  const stateBoxClass = message
+    ? "border-green-300/70 bg-green-50 text-green-700 dark:border-green-400/30 dark:bg-green-500/10 dark:text-green-200"
+    : error
+      ? "border-red-300/70 bg-red-50 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200"
+      : "border-[var(--border)] bg-[var(--bg-secondary)]/65 text-[var(--muted)]";
+
   const sendMagicLink = async (e: FormEvent) => {
-    e.preventDefault(); // 기본 폼 전송(페이지 새로고침) 방지
+    e.preventDefault();
     setError("");
     setMessage("");
-    if (!email) {
-      setError("이메일을 입력해주세요.");
+
+    if (!email.trim()) {
+      setError("Please enter your email.");
       return;
     }
 
     setIsLoading(true);
-    // 로그인 링크 클릭 후 돌아올 URL (현재 사이트의 루트)
     const redirectTo = `${window.location.origin}/`;
     const { error: signInError } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: redirectTo }
+      email: email.trim(),
+      options: {
+        emailRedirectTo: redirectTo,
+        shouldCreateUser: true
+      }
     });
 
     if (signInError) {
-      setError(signInError.message);
+      setError(signInError.message || "Failed to send sign-in link.");
     } else {
-      // mode에 따라 다른 성공 메시지 표시
-      const successMessage =
-        mode === "signup"
-          ? "인증 메일이 전송되었습니다. 가입을 완료하려면 메일 링크를 확인하세요."
-          : "인증 메일이 전송되었습니다. 메일의 링크를 눌러 로그인하세요.";
-      setMessage(successMessage);
+      setMessage(
+        isSignup
+          ? "Sign-up link sent. Open your email and continue."
+          : "Sign-in link sent. Open your email and continue."
+      );
       onEmailSent?.();
     }
     setIsLoading(false);
   };
 
-  const isSignup = mode === "signup";
-  const wrapperClass = compact
-    ? "w-full max-w-md overflow-hidden rounded-[1.5rem] border border-[var(--border)] bg-[var(--bg)]/95 p-0 shadow-2xl shadow-black/10 backdrop-blur-2xl"
-    : "mx-auto flex min-h-screen w-full max-w-3xl items-center justify-center px-5 py-14";
-  const submitLabel = isSignup ? "회원가입 링크 받기" : "로그인 링크 받기";
-  const heading = isSignup ? "회원가입" : "로그인";
-  const helperText = isSignup ? "회원가입용 인증 메일을 받아 시작하세요." : "날짜별 기록을 저장하려면 이메일 인증이 필요해요.";
-  const stateToneClass = message
-    ? "border-green-300/70 bg-green-50 text-green-700 dark:border-green-400/30 dark:bg-green-500/10 dark:text-green-200"
-    : error
-      ? "border-red-300/70 bg-red-50 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200"
-      : "border-[var(--border)]/80 bg-[var(--bg-secondary)]/60 text-[var(--muted)]";
+  const startSocialAuth = async (
+    provider: (typeof socialItems)[number]["provider"],
+    socialKey: string,
+    label: string
+  ) => {
+    setError("");
+    setMessage("");
+    setSocialLoadingKey(socialKey);
+
+    const redirectTo = `${window.location.origin}/`;
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: provider as any,
+      options: {
+        redirectTo
+      }
+    });
+
+    if (oauthError) {
+      setSocialLoadingKey(null);
+      setError(
+        oauthError.message ||
+          `${label} login is not available. Enable ${label} provider in Supabase Auth settings.`
+      );
+    }
+  };
 
   return (
     <section className={wrapperClass}>
       <div className="relative p-4 sm:p-6">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-[var(--primary)]/8 to-transparent" />
-
-        {onClose && (
+        {onClose ? (
           <div className="mb-2 flex justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="relative z-10 rounded-full border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-light)] transition-colors hover:bg-[var(--bg-hover)]"
+              className="rounded-full border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-light)] transition-colors hover:bg-[var(--bg-hover)]"
             >
-              닫기
+              Close
             </button>
           </div>
-        )}
+        ) : null}
 
-        <form onSubmit={sendMagicLink} className="relative z-10 w-full overflow-hidden rounded-[1.5rem] border border-[var(--border)] bg-[var(--bg)]">
-          <div className="relative overflow-hidden border-b border-[var(--border)] px-6 py-7">
-            <div className="absolute -top-8 right-0 h-28 w-28 rounded-full bg-[var(--primary)]/12 blur-3xl" />
-            <div className="relative flex items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-full bg-[var(--primary)]/15 text-[var(--primary)]">
-                <MailCheck className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">Daily Flow</p>
-                <h1 className="text-2xl font-black text-[var(--ink)]">{heading}</h1>
-                <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{helperText}</p>
-              </div>
+        <form
+          onSubmit={sendMagicLink}
+          className="relative overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[var(--bg)] px-5 pb-6 pt-8 sm:px-8"
+        >
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 h-56 opacity-70"
+            style={{
+              backgroundImage:
+                "linear-gradient(to right, rgba(59,130,246,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(59,130,246,0.08) 1px, transparent 1px)",
+              backgroundSize: "52px 52px"
+            }}
+          />
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-56 bg-gradient-to-b from-sky-100/65 to-transparent dark:from-sky-900/20" />
+
+          <div className="relative z-10 text-center">
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-blue-400 to-indigo-600 text-white shadow-lg shadow-blue-500/25">
+              <Lock className="h-7 w-7" />
             </div>
-            <div className="relative mt-3 inline-flex items-center gap-2 rounded-full border border-[var(--border)] px-3 py-1 text-xs font-medium">
-              <ShieldCheck className="h-3.5 w-3.5 text-[var(--success)]" />
-              비밀번호 없이 안전한 링크 인증
-            </div>
+            <h1 className="text-[2rem] font-black tracking-[-0.02em] text-[var(--ink)]">{title}</h1>
+            <p className="mt-2 text-base text-[var(--ink-light)]">{subtitle}</p>
           </div>
 
-          <div className="px-6 py-6">
-            <p className="mb-5 text-sm leading-6 text-[var(--ink-light)]">
-              {description ??
-                (isSignup ? "회원가입용 인증 메일을 보내드려요." : "날짜별 To-do와 회고를 기록하고, 필요할 때만 안전하게 저장할 수 있어요.")}
-            </p>
+          <div className="relative z-10 mt-7 grid grid-cols-3 gap-3">
+            {socialItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => void startSocialAuth(item.provider, item.key, item.label)}
+                  disabled={isLoading || socialLoadingKey !== null}
+                  title={`Continue with ${item.label}`}
+                  className="flex h-14 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--bg)] text-sm font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {socialLoadingKey === item.key ? (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--ink)] border-t-transparent" />
+                  ) : (
+                    <Icon className={`h-5 w-5 ${item.colorClass}`} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
-            <div className="mb-4 flex items-center justify-between text-xs font-semibold text-[var(--muted)]">
-              <span>EMAIL ADDRESS</span>
-              <span className="rounded-full border px-2 py-1 text-[10px] tracking-normal text-[var(--ink-light)]">Step 1</span>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
-              <div className="relative flex-1">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted)] pointer-events-none">
-                  <Mail className="h-5 w-5" />
-                </span>
-                <input
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  type="email"
-                  autoComplete="email"
-                className="n-input w-full rounded-xl border-[var(--border)] bg-[var(--bg)] pl-12 pr-4 py-3.5 text-base placeholder:text-[var(--muted)]"
-                placeholder="name@example.com"
+          <div className="relative z-10 my-6 flex items-center gap-3">
+            <span className="h-px flex-1 bg-[var(--border)]" />
+            <span className="text-xs font-semibold tracking-[0.12em] text-[var(--muted)]">OR</span>
+            <span className="h-px flex-1 bg-[var(--border)]" />
+          </div>
+
+          <div className="relative z-10 space-y-4">
+            <div className="relative">
+              <Mail className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--muted)]" />
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                type="email"
+                autoComplete="email"
+                placeholder="Enter your email..."
                 aria-label="Email"
+                className="n-input h-14 w-full rounded-2xl border-[var(--border)] bg-[var(--bg)] text-base"
+                style={{ paddingLeft: "3rem", paddingRight: "1rem" }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-sm">
+              <label className="inline-flex cursor-pointer items-center gap-2 text-[var(--ink)]">
+                <input
+                  type="checkbox"
+                  checked={rememberDevice}
+                  onChange={(e) => setRememberDevice(e.target.checked)}
+                  className="h-4 w-4 rounded border-[var(--border)]"
                 />
-              </div>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="n-btn-primary min-h-[50px] shrink-0 rounded-xl px-5 text-sm font-semibold tracking-wide shadow-sm disabled:cursor-not-allowed disabled:opacity-60 sm:min-w-[168px]"
-              >
-                {isLoading ? (
-                  <>
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    전송 중
-                  </>
-                ) : (
-                  <>
-                    <Send className="h-4 w-4" />
-                    {submitLabel}
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </>
-                )}
+                Remember device
+              </label>
+              <button type="button" className="text-[var(--ink-light)] underline underline-offset-2">
+                Need help?
               </button>
             </div>
 
-            {error && <p className="mt-3 text-sm font-semibold text-[var(--danger)]">{error}</p>}
-            {message && <p className="mt-3 text-sm font-semibold text-[var(--success)]">{message}</p>}
-
-            <div className={`mt-4 rounded-xl border px-3 py-2 text-xs leading-5 ${stateToneClass}`}>
-              {message ? (
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl border border-black/10 bg-gradient-to-b from-zinc-800 to-black text-base font-semibold text-white shadow-[0_10px_24px_rgba(0,0,0,0.25)] transition-opacity disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isLoading ? (
                 <>
-                  <p className="mb-1 font-semibold">메일 링크가 전송되었어요.</p>
-                  <p>받은 편지함에서 링크를 클릭해 인증을 완료해 주세요.</p>
-                </>
-              ) : error ? (
-                <>
-                  <p className="mb-1 font-semibold">발송 실패</p>
-                  <p>입력한 이메일이 맞는지 확인하고 다시 시도해 주세요.</p>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  Sending...
                 </>
               ) : (
                 <>
-                  <p className="mb-1 font-semibold">알아두면 좋은 점</p>
-                  <p>링크는 짧은 시간 동안만 유효해요. 스팸함도 꼭 확인해 주세요.</p>
+                  {submitLabel}
+                  <ArrowRight className="h-4 w-4" />
                 </>
               )}
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-[var(--muted)] sm:grid-cols-2">
-              <div className="rounded-lg border border-[var(--border)] px-3 py-2">
-                <p className="font-semibold text-[var(--ink)]">간단 등록</p>
-                <p>비밀번호 없이 이메일로 바로 로그인</p>
-              </div>
-              <div className="rounded-lg border border-[var(--border)] px-3 py-2">
-                <p className="font-semibold text-[var(--ink)]">안전 보안</p>
-                <p>링크는 유효기간이 있고 장기 저장되지 않음</p>
-              </div>
-            </div>
+            </button>
           </div>
+
+          <div className={`relative z-10 mt-4 rounded-xl border px-3 py-2 text-xs leading-5 ${stateBoxClass}`}>
+            {message ? (
+              <p>{message}</p>
+            ) : error ? (
+              <p>{error}</p>
+            ) : (
+              <p>{helperCopy}</p>
+            )}
+          </div>
+
+          <p className="relative z-10 mt-5 text-center text-sm text-[var(--ink-light)]">
+            {isSignup ? "Already have an account? Use sign in mode." : "No account yet? Sign in with email to create one."}
+          </p>
         </form>
       </div>
     </section>
