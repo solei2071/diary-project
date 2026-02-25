@@ -679,7 +679,7 @@ export default function Home() {
                           <p>Templates: {planInfo.features.canTemplates ? "Enabled" : "Unavailable"}</p>
                           <p>Todo repeat: {planInfo.features.canTodoRepeat ? "Enabled" : "Unavailable"}</p>
                           <p>Advanced summary: {planInfo.features.canAdvancedSummary ? "Enabled" : "Unavailable"}</p>
-                        )}
+                        </div>
                       </div>
                       <div className="rounded-md border border-[var(--border)] p-2">
                         <div className="mb-1 flex items-center gap-1.5 text-[var(--ink)]">
