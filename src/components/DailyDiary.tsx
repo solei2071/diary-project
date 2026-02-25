@@ -2954,7 +2954,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("week")}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    className={`px-3 py-1.5 text-center min-w-16 text-xs font-medium rounded-md transition-colors ${
                       dashboardViewMode === "week"
                         ? "bg-[var(--primary)] text-white"
                         : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
@@ -2965,7 +2965,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("month")}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    className={`px-3 py-1.5 text-center min-w-16 text-xs font-medium rounded-md transition-colors ${
                       dashboardViewMode === "month"
                         ? "bg-[var(--primary)] text-white"
                         : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
@@ -3127,14 +3127,14 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     {filteredSummaryActivities.map((item) => (
                       <div
                         key={item.emoji}
-                        className="grid min-w-0 items-start gap-2"
+                        className="grid min-w-0 items-start gap-2 justify-items-start"
                         style={{ gridTemplateColumns: "1.25rem minmax(0, 1fr) auto" }}
                       >
                         <span className="text-base leading-5">{item.emoji}</span>
                         <span className="min-w-0 break-words text-[11px] leading-5 text-[var(--muted)]">
                           {item.label ? `- ${item.label}` : ""}
                         </span>
-                        <span className="text-right text-[11px] leading-5 text-[var(--ink)] whitespace-nowrap">{formatHoursLabel(item.hours)}</span>
+                        <span className="text-left text-[11px] leading-5 text-[var(--ink)] whitespace-nowrap">{formatHoursLabel(item.hours)}</span>
                       </div>
                     ))}
                   </div>
