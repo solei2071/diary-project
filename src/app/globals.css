@@ -442,6 +442,10 @@ textarea {
   animation: fadeIn 0.2s ease-out both;
 }
 
+.toast-in {
+  animation: toastIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
 .fade-up {
   animation: fadeUp 0.25s ease-out both;
 }
@@ -467,6 +471,17 @@ textarea {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 

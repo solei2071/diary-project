@@ -15,14 +15,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent, MouseEvent } from "react";
 import {
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Loader2,
   Palette,
   Save,
   Search,
-  Settings
+  Settings,
+  Trash2
 } from "lucide-react";
+import { useToast } from "./Toast";
 import type { Session } from "@supabase/supabase-js";
 import type { DailyActivityRow, JournalRow } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
@@ -36,6 +39,8 @@ import {
 } from "@/lib/user-symbols";
 import type { UserSymbol } from "@/lib/user-symbols";
 import SymbolPicker from "./SymbolPicker";
+import SearchModal from "./SearchModal";
+import StatsModal from "./StatsModal";
 
 /** Date → YYYY-MM-DD (로컬 기준. toISOString은 UTC라 한국 등에서 하루 밀림) */
 function toLocalDateString(date: Date): string {
@@ -548,6 +553,133 @@ function TimeInput({ value, onCommit, onAutoAdvance, ariaLabel }: {
   );
 }
 
+/** 스와이프로 완료/삭제가 가능한 할 일 아이템
+ * - 오른쪽 스와이프: 완료 토글 (초록)
+ * - 왼쪽 스와이프: 삭제 (빨강)
+ * - 마우스 호버: 삭제 버튼 노출
+ */
+type SwipeableTodoItemProps = {
+  todo: UiTodo;
+  onToggle: () => void;
+  onDelete: () => void;
+};
+
+function SwipeableTodoItem({ todo, onToggle, onDelete }: SwipeableTodoItemProps) {
+  const [swipeX, setSwipeX] = useState(0);
+  const [isActive, setIsActive] = useState(false);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const dirLocked = useRef<"h" | "v" | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const THRESHOLD = 72;
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+    dirLocked.current = null;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStart.current) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+
+    if (dirLocked.current === null) {
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+        dirLocked.current = "h";
+        // 가로 스와이프 감지 시 스크롤 즉시 차단
+        if (contentRef.current) {
+          contentRef.current.style.touchAction = "none";
+        }
+      } else if (Math.abs(dy) > 8) {
+        dirLocked.current = "v";
+        return;
+      } else {
+        return;
+      }
+    }
+
+    if (dirLocked.current !== "h") return;
+    setIsActive(true);
+    setSwipeX(Math.max(-THRESHOLD * 1.4, Math.min(THRESHOLD * 1.4, dx)));
+  };
+
+  const handleTouchEnd = () => {
+    if (contentRef.current) {
+      contentRef.current.style.touchAction = "";
+    }
+    if (swipeX >= THRESHOLD) onToggle();
+    else if (swipeX <= -THRESHOLD) onDelete();
+    setSwipeX(0);
+    setIsActive(false);
+    touchStart.current = null;
+    dirLocked.current = null;
+  };
+
+  const progress = Math.min(1, Math.abs(swipeX) / THRESHOLD);
+  const isRight = swipeX > 8;
+  const isLeft = swipeX < -8;
+
+  return (
+    <li className="group relative overflow-hidden border-b border-[var(--border)] last:border-b-0">
+      {/* 스와이프 배경 레이어 */}
+      {(isRight || isLeft) && (
+        <div
+          className="absolute inset-0 flex items-center px-4"
+          style={{
+            background: isRight ? "var(--success)" : "var(--danger)",
+            justifyContent: isRight ? "flex-start" : "flex-end",
+            opacity: progress,
+          }}
+          aria-hidden="true"
+        >
+          {isRight ? (
+            <CheckCircle2 className="h-5 w-5 text-white" />
+          ) : (
+            <Trash2 className="h-5 w-5 text-white" />
+          )}
+        </div>
+      )}
+
+      {/* 콘텐츠 레이어 */}
+      <div
+        ref={contentRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        style={{
+          transform: `translateX(${swipeX}px)`,
+          transition: isActive ? "none" : "transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)",
+          position: "relative",
+          zIndex: 1,
+          touchAction: "pan-y",
+        }}
+        className="flex items-center gap-2 bg-[var(--bg)] px-3 py-3"
+      >
+        <label className="flex flex-1 cursor-pointer items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={todo.done}
+            onChange={onToggle}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--primary)]"
+          />
+          <span className={`text-sm leading-6 ${todo.done ? "text-[var(--muted)] line-through" : "text-[var(--ink)]"}`}>
+            {todo.title}
+          </span>
+        </label>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="h-6 w-6 shrink-0 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-[var(--muted)] hover:text-[var(--danger)]"
+          aria-label="Delete todo"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </li>
+  );
+}
+
 export default function DailyDiary({
   session,
   onRequestAuth,
@@ -556,6 +688,7 @@ export default function DailyDiary({
 }: Props) {
   const user = session?.user ?? null;
   const isGuest = !user;
+  const { show: showToast } = useToast();
   const [selectedDate, setSelectedDate] = useState(initialDate);
   const [todos, setTodos] = useState<UiTodo[]>([]);
   const [activities, setActivities] = useState<UiActivity[]>([]);
@@ -632,6 +765,8 @@ export default function DailyDiary({
   const [isTemplatePanelOpen, setIsTemplatePanelOpen] = useState(false);
   const [userSymbols, setUserSymbols] = useState<UserSymbol[]>(getDefaultSymbols);
   const [isSymbolPickerOpen, setIsSymbolPickerOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [dashboardViewMode, setDashboardViewMode] = useState<"week" | "month">(() => {
     try {
       const v = typeof window !== "undefined" ? localStorage.getItem("diary-dashboard-view") : null;
@@ -1623,6 +1758,43 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setIsTodoDirty(false);
   };
 
+  /** 할 일 삭제 (Optimistic UI + Undo 지원) */
+  const deleteTodo = async (todo: UiTodo) => {
+    const prev = [...todos];
+    const updated = todos.filter((t) => t.id !== todo.id);
+    setTodos(updated);
+
+    showToast("Task deleted", "info", {
+      undoLabel: "Undo",
+      onUndo: () => {
+        setTodos(sortTodosForDisplay([...updated, todo]));
+        if (user) {
+          void supabase.from("todos").insert({
+            id: todo.id,
+            user_id: user.id,
+            due_date: todo.due_date,
+            title: todo.title,
+            done: todo.done
+          });
+        } else {
+          updateDraftTodo([...updated, todo]);
+        }
+      }
+    });
+
+    if (user) {
+      const { error } = await supabase.from("todos").delete().eq("id", todo.id);
+      if (error) {
+        if (!shouldIgnoreSupabaseSchemaError(error.message)) {
+          setTodos(sortTodosForDisplay(prev));
+          setTodoError(getSafeSupabaseError(error.message));
+        }
+      }
+    } else {
+      updateDraftTodo(updated);
+    }
+  };
+
   /** 새 To-do 즉시 추가 */
   const toggleTodoRepeatDay = (dayValue: number) => {
     if (!canTodoRepeat) return;
@@ -1660,6 +1832,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setNewTodoTitle("");
     setIsAddingTodo(false);
     setIsTodoDirty(true);
+    showToast("Task added", "success");
 
     if (isGuest) {
       const nextDraft = { ...draftTodosByDate };
@@ -1805,6 +1978,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       return;
     }
     setIsJournalDirty(false);
+    showToast("Notes saved", "success");
     await loadData(selectedDate);
   };
 
@@ -2379,10 +2553,32 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           {/* ── Right Main Content ── */}
         <div className="min-w-0 flex-1 space-y-8">
 
-          {/* 날짜 헤딩 */}
-          <h2 className="text-base font-semibold text-[var(--ink)] fade-up">
-            {prettyDateLabel(selectedDate)}
-          </h2>
+          {/* 날짜 헤딩 + 검색/통계 버튼 */}
+          <div className="fade-up flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-[var(--ink)]">
+              {prettyDateLabel(selectedDate)}
+            </h2>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setIsStatsOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink)] transition-colors"
+                aria-label="Open stats"
+              >
+                <span>📊</span>
+                <span className="hidden sm:inline">Stats</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSearchOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink)] transition-colors"
+                aria-label="Open search"
+              >
+                <Search className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Search</span>
+              </button>
+            </div>
+          </div>
 
           {/* ── To-do ── */}
           <section className="fade-up overflow-visible rounded-lg border border-[var(--border)]">
@@ -2485,24 +2681,24 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   </div>
                 </div>
               ) : null}
-              <ul className="divide-y divide-[var(--border)]">
-                {todos.length === 0 && <li className="px-3 py-3 n-empty">No tasks yet</li>}
-                {todos.map((todo) => (
-                  <li key={todo.id} className="group n-row px-3 py-3">
-                    <label className="flex flex-1 cursor-pointer items-start gap-2.5">
-                      <input
-                        type="checkbox"
-                        checked={todo.done}
-                        onChange={() => toggleTodo(todo)}
-                        className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--primary)]"
-                      />
-                      <span className={`text-sm leading-6 ${todo.done ? "text-[var(--muted)] line-through" : "text-[var(--ink)]"}`}>
-                        {todo.title}
-                      </span>
-                    </label>
+              <ul>
+                {todos.length === 0 ? (
+                  <li className="flex flex-col items-center gap-2 px-3 py-8 text-center">
+                    <CheckCircle2 className="h-8 w-8 text-[var(--muted)] opacity-30" />
+                    <p className="text-sm font-medium text-[var(--muted)]">No tasks yet</p>
+                    <p className="text-xs text-[var(--muted)] opacity-60">Tap + to add your first task for today</p>
                   </li>
-              ))}
-            </ul>
+                ) : (
+                  todos.map((todo) => (
+                    <SwipeableTodoItem
+                      key={todo.id}
+                      todo={todo}
+                      onToggle={() => void toggleTodo(todo)}
+                      onDelete={() => void deleteTodo(todo)}
+                    />
+                  ))
+                )}
+              </ul>
           </section>
 
           <div className="n-divider" />
@@ -2834,9 +3030,15 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     ))}
                 </div>
               ) : (
-                <p className="break-words px-3 py-2 text-xs leading-5 text-[var(--ink)]">
-                  {normalizedActivityLogQuery ? "No matches in activity log." : "Tap an emoji to log activity."}
-                </p>
+                <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
+                  <span className="text-3xl leading-none opacity-25" aria-hidden="true">⏱</span>
+                  <p className="text-sm font-medium text-[var(--muted)]">
+                    {normalizedActivityLogQuery ? "No matches found" : "No activities logged"}
+                  </p>
+                  <p className="text-xs text-[var(--muted)] opacity-60">
+                    {normalizedActivityLogQuery ? "Try a different keyword" : "Tap an emoji above to start tracking"}
+                  </p>
+                </div>
                 )}
                 {activityContextMenu ? (
                   <div
@@ -3171,6 +3373,27 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
         </div>
       </div>
+
+      {/* 전역 검색 모달 */}
+      {isSearchOpen && (
+        <SearchModal
+          session={session}
+          onClose={() => setIsSearchOpen(false)}
+          onSelectDate={(date) => {
+            setSelectedDate(date);
+            setIsSearchOpen(false);
+          }}
+        />
+      )}
+
+      {/* 통계 모달 */}
+      {isStatsOpen && (
+        <StatsModal
+          session={session}
+          selectedDate={selectedDate}
+          onClose={() => setIsStatsOpen(false)}
+        />
+      )}
     </main>
   );
 }

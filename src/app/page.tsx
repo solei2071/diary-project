@@ -10,6 +10,15 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import AuthPanel from "@/components/AuthPanel";
 import DailyDiary from "@/components/DailyDiary";
+import { ToastProvider } from "@/components/Toast";
+import OnboardingModal, { hasCompletedOnboarding } from "@/components/OnboardingModal";
+import {
+  loadNotificationSettings,
+  saveNotificationSettings,
+  requestNotificationPermission,
+  getNotificationPermission,
+  type NotificationSettings
+} from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
 import {
   CheckCircle2,
@@ -51,6 +60,7 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   // authMode: 로그인/회원가입 모달 표시 모드 (null = 모달 숨김)
   const [authMode, setAuthMode] = useState<"login" | "signup" | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<"light" | "dark">("light");
   const [symbolPlan, setSymbolPlan] = useState<UserSymbolPlan>("free");
@@ -113,6 +123,10 @@ export default function Home() {
         setPlanError("");
       }
       setReady(true);
+      // 첫 방문자 온보딩 체크
+      if (!hasCompletedOnboarding()) {
+        setShowOnboarding(true);
+      }
     };
 
     void loadSession();
@@ -276,6 +290,67 @@ export default function Home() {
     }
   }, [isSettingsOpen, session, loadAccountSubscription]);
 
+  const [isExporting, setIsExporting] = useState(false);
+  const [notifSettings, setNotifSettings] = useState<NotificationSettings>(() => loadNotificationSettings());
+  const [notifPermission, setNotifPermission] = useState<string>(() => {
+    if (typeof window === "undefined") return "default";
+    return getNotificationPermission();
+  });
+
+  const exportMyData = async () => {
+    if (!session?.user) return;
+    setIsExporting(true);
+    try {
+      const [todosRes, journalRes, activitiesRes] = await Promise.all([
+        supabase.from("todos").select("*").eq("user_id", session.user.id).order("due_date"),
+        supabase.from("journal_entries").select("*").eq("user_id", session.user.id).order("entry_date"),
+        supabase.from("daily_activities").select("*").eq("user_id", session.user.id).order("activity_date")
+      ]);
+
+      const exportData = {
+        exportedAt: new Date().toISOString(),
+        user: { id: session.user.id, email: session.user.email },
+        todos: todosRes.data ?? [],
+        journalEntries: journalRes.data ?? [],
+        dailyActivities: activitiesRes.data ?? []
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `daily-flow-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleNotifToggle = async () => {
+    if (notifSettings.enabled) {
+      // 비활성화
+      const next = { ...notifSettings, enabled: false };
+      setNotifSettings(next);
+      saveNotificationSettings(next);
+      return;
+    }
+    // 활성화: 권한 요청
+    const perm = await requestNotificationPermission();
+    setNotifPermission(perm);
+    if (perm === "granted") {
+      const next = { ...notifSettings, enabled: true };
+      setNotifSettings(next);
+      saveNotificationSettings(next);
+    }
+  };
+
+  const handleNotifTimeChange = (time: string) => {
+    const next = { ...notifSettings, reminderTime: time };
+    setNotifSettings(next);
+    saveNotificationSettings(next);
+  };
+
   const applyThemeMode = (mode: "light" | "dark") => {
     setThemeMode(mode);
     if (typeof window === "undefined") return;
@@ -399,6 +474,7 @@ export default function Home() {
   }
 
   return (
+    <ToastProvider>
     <div className="relative">
       {/* 상단 고정 헤더: 로그인 시 이메일, 비로그인 시 로그인/회원가입 탭 */}
       <section
@@ -503,6 +579,44 @@ export default function Home() {
                     >
                       <Moon className="h-3.5 w-3.5" /> Dark
                     </button>
+                  </div>
+                  {/* 알림 설정 */}
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">Notifications</p>
+                  <div className="mb-2 rounded-md border border-[var(--border)] p-2">
+                    {notifPermission === "unsupported" ? (
+                      <p className="text-[11px] text-[var(--muted)]">Notifications not supported in this browser.</p>
+                    ) : notifPermission === "denied" ? (
+                      <p className="text-[11px] text-[var(--muted)]">Notifications are blocked. Allow them in browser settings.</p>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-[var(--ink)]">Daily reminder</span>
+                          <button
+                            type="button"
+                            onClick={() => void handleNotifToggle()}
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${notifSettings.enabled ? "bg-[var(--primary)]" : "bg-[var(--border-strong)]"}`}
+                            role="switch"
+                            aria-checked={notifSettings.enabled}
+                          >
+                            <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${notifSettings.enabled ? "translate-x-4" : "translate-x-0"}`} />
+                          </button>
+                        </div>
+                        {notifSettings.enabled && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="text-[11px] text-[var(--muted)]">Time</span>
+                            <input
+                              type="time"
+                              value={notifSettings.reminderTime}
+                              onChange={(e) => handleNotifTimeChange(e.target.value)}
+                              className="n-input h-7 px-2 py-1 text-xs"
+                            />
+                          </div>
+                        )}
+                        <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
+                          Shows a reminder to record your day at the set time.
+                        </p>
+                      </>
+                    )}
                   </div>
                   <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">Plan</p>
                   <div className="mb-2 rounded-md border border-[var(--border)] p-2">
@@ -733,6 +847,21 @@ export default function Home() {
                         {accountError && <p className="mt-1 text-[11px] text-[var(--danger)]">{accountError}</p>}
                         {accountMessage && <p className="mt-1 text-[11px] text-[var(--success)]">{accountMessage}</p>}
                       </div>
+                      {/* 개인 데이터 내보내기 */}
+                      <div className="rounded-md border border-[var(--border)] p-2">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">Data</p>
+                        <button
+                          type="button"
+                          onClick={() => void exportMyData()}
+                          disabled={isExporting}
+                          className="w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isExporting ? "Exporting…" : "Export my data (JSON)"}
+                        </button>
+                        <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
+                          Downloads all your tasks, notes, and activities as a JSON file.
+                        </p>
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -793,10 +922,19 @@ export default function Home() {
             mode={authMode}
             onEmailSent={() => setAuthMode(null)}
             onClose={() => setAuthMode(null)}
-            description="저장하려면 이메일 인증이 필요합니다. 아래에서 이메일을 입력해 주세요."
+            description="Sign in with your email to securely save your diary."
           />
         </div>
       )}
+
+      {/* 온보딩 모달 — 첫 방문 시에만 표시 */}
+      {showOnboarding && !session && (
+        <OnboardingModal
+          onComplete={() => setShowOnboarding(false)}
+          onRequestSignIn={() => { setShowOnboarding(false); setAuthMode("signup"); }}
+        />
+      )}
     </div>
+    </ToastProvider>
   );
 }

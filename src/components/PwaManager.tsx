@@ -1,7 +1,12 @@
 "use client";
 
 import { RefreshCw, Download, XCircle } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  loadNotificationSettings,
+  msUntilReminderTime,
+  showDailyReminder
+} from "@/lib/notifications";
 
 type BeforeInstallPromptEvent = Event & {
   readonly platforms: string[];
@@ -55,6 +60,35 @@ export default function PwaManager() {
 
   const dismissUpdate = useCallback(() => {
     setRegistration((prev) => ({ ...prev, hasUpdate: false }));
+  }, []);
+
+  // 알림 스케줄링 타이머 ref
+  const notifTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 앱 로드 시 알림 스케줄 등록
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const scheduleReminder = () => {
+      const settings = loadNotificationSettings();
+      if (!settings.enabled) return;
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+      if (notifTimerRef.current) clearTimeout(notifTimerRef.current);
+
+      const ms = msUntilReminderTime(settings.reminderTime);
+      notifTimerRef.current = setTimeout(() => {
+        showDailyReminder(loadNotificationSettings());
+        // 다음 날 알림 재등록
+        scheduleReminder();
+      }, ms);
+    };
+
+    scheduleReminder();
+
+    return () => {
+      if (notifTimerRef.current) clearTimeout(notifTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
