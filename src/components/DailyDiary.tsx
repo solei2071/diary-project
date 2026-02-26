@@ -12,7 +12,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent, KeyboardEvent, MouseEvent } from "react";
+import type { DragEvent, KeyboardEvent, MouseEvent, TouchEvent } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -133,173 +133,6 @@ const ACTIVITY_STEP_STORAGE_KEY = "diary-activity-step-minutes";
 const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const defaultActivities = ["💻", "🕍", "🔆", "🥋", "🏋️", "🍷", "🍻", "🍸", "🍺"];
-
-type SeedDayData = {
-  activities: Array<Pick<UiActivity, "emoji" | "hours" | "label" | "startTime">>;
-  memo: string[];
-};
-
-const sampleFebruary2026: Record<string, SeedDayData> = {
-  "01": { activities: [{ emoji: "🥋", hours: 1, label: "" }], memo: [] },
-  "02": {
-    activities: [
-      { emoji: "🕍", hours: 1, label: "" },
-      { emoji: "🏋️", hours: 1, label: "" },
-      { emoji: "💻", hours: 1, label: "" },
-      { emoji: "🔆", hours: 2, label: "" }
-    ],
-    memo: []
-  },
-  "03": {
-    activities: [
-      { emoji: "🕍", hours: 1, label: "" },
-      { emoji: "🏋️", hours: 1, label: "" },
-      { emoji: "💻", hours: 1, label: "" }
-    ],
-    memo: []
-  },
-  "04": {
-    activities: [
-      { emoji: "🕍", hours: 1, label: "" },
-      { emoji: "🏋️", hours: 1, label: "" },
-      { emoji: "💻", hours: 3, label: "" },
-      { emoji: "🥋", hours: 1, label: "" }
-    ],
-    memo: [
-      "Cursor subscribed, anti gravity?",
-      "Cursor lecture study and learn git * Git"
-    ]
-  },
-  "05": {
-    activities: [
-      { emoji: "💻", hours: 5, label: "" },
-      { emoji: "🔆", hours: 1, label: "" },
-      { emoji: "🥋", hours: 1, label: "" }
-    ],
-    memo: ["Git . Open Ai Api Add * API"]
-  },
-  "06": {
-    activities: [
-      { emoji: "💻", hours: 3, label: "" },
-      { emoji: "🔆", hours: 1, label: "" },
-      { emoji: "🍷", hours: 1, label: "" },
-      { emoji: "🍻", hours: 1, label: "" }
-    ],
-    memo: ["Versel . * Versel"]
-  },
-  "07": {
-    activities: [{ emoji: "🤿", hours: 1, label: "" }, { emoji: "💻", hours: 1, label: "" }],
-    memo: ["Supabase"]
-  },
-  "08": {
-    activities: [
-      { emoji: "🕍", hours: 1, label: "" },
-      { emoji: "💻", hours: 3, label: "" },
-      { emoji: "🍸", hours: 1, label: "" }
-    ],
-    memo: ["Study Stacks"]
-  },
-  "09": {
-    activities: [
-      { emoji: "🕍", hours: 1, label: "" },
-      { emoji: "💻", hours: 3, label: "" },
-      { emoji: "🔆", hours: 1, label: "" },
-      { emoji: "🥋", hours: 1, label: "" }
-    ],
-    memo: ["Claude Code Sub"]
-  },
-  "10": {
-    activities: [{ emoji: "🕍", hours: 1, label: "" }, { emoji: "💻", hours: 2, label: "" }],
-    memo: ["Inflearn JS let start"]
-  },
-  "11": {
-    activities: [
-      { emoji: "🕍", hours: 1, label: "" },
-      { emoji: "💻", hours: 1, label: "" },
-      { emoji: "🔆", hours: 3, label: "" },
-      { emoji: "🥋", hours: 1, label: "" }
-    ],
-    memo: []
-  },
-  "12": {
-    activities: [{ emoji: "💻", hours: 3, label: "" }, { emoji: "🔆", hours: 3, label: "" }],
-    memo: []
-  },
-  "13": {
-    activities: [{ emoji: "🕍", hours: 1, label: "" }, { emoji: "🥋", hours: 1, label: "" }],
-    memo: ["Codex Install"]
-  },
-  "14": {
-    activities: [{ emoji: "💻", hours: 3, label: "" }],
-    memo: ["Using Codex . First Deploy the project"]
-  },
-  "15": {
-    activities: [{ emoji: "💻", hours: 6, label: "" }, { emoji: "🥋", hours: 1, label: "" }],
-    memo: ["Used 70% Weekly Claude Token this week . Ad apply"]
-  },
-  "16": {
-    activities: [{ emoji: "💻", hours: 4, label: "" }],
-    memo: ["Making Stock Chart"]
-  },
-  "17": {
-    activities: [{ emoji: "💻", hours: 4, label: "" }],
-    memo: ["Tried Ollama"]
-  },
-  "18": {
-    activities: [{ emoji: "💻", hours: 4, label: "" }, { emoji: "🥋", hours: 1, label: "" }],
-    memo: ["Maxim. . Family Lunch"]
-  },
-  "19": {
-    activities: [],
-    memo: ["Yh"]
-  },
-  "20": {
-    activities: [{ emoji: "🕍", hours: 1, label: "" }],
-    memo: []
-  },
-  "21": {
-    activities: [{ emoji: "🕍", hours: 1, label: "" }, { emoji: "💻", hours: 1, label: "" }, { emoji: "🍺", hours: 1, label: "" }],
-    memo: []
-  },
-  "22": {
-    activities: [{ emoji: "🥋", hours: 1, label: "" }],
-    memo: []
-  },
-  "23": {
-    activities: [{ emoji: "🕍", hours: 1, label: "" }, { emoji: "💻", hours: 1, label: "" }],
-    memo: []
-  },
-  "24": { activities: [], memo: [] },
-  "25": { activities: [], memo: [] },
-  "26": { activities: [], memo: [] },
-  "27": { activities: [], memo: [] },
-  "28": { activities: [], memo: [] }
-};
-
-const toSampleDateKey = (value: string) => {
-  const [year, month, day] = value.split("-");
-  if (year !== "2026" || month !== "02") return undefined;
-  return day;
-};
-
-const getSeedForDate = (value: string) => {
-  const day = toSampleDateKey(value);
-  if (!day) return undefined;
-  return sampleFebruary2026[day];
-};
-
-const toSampleDraftActivities = (value: string) => {
-  const seed = getSeedForDate(value);
-  if (!seed) return undefined;
-  return seed.activities.map((item) => ({
-    id: `seed-${value}-${item.emoji}`,
-    activity_date: value,
-    emoji: item.emoji,
-    label: item.label,
-    hours: item.hours,
-    start_time: item.startTime ?? "00:00"
-  }));
-};
 
 /** 캘린더 그리드용 날짜 배열 — 앞쪽 빈 칸(null) + 해당 월 일자들 (7열 그리드 맞추기) */
 function getMonthDaysForCalendar(baseMonth: string) {
@@ -741,6 +574,9 @@ export default function DailyDiary({
   const activityTrashRef = useRef<HTMLDivElement | null>(null);
   const [isDraggingActivity, setIsDraggingActivity] = useState(false);
   const [isOverActivityTrash, setIsOverActivityTrash] = useState(false);
+  const [activitySwipeXByEmoji, setActivitySwipeXByEmoji] = useState<Record<string, number>>({});
+  const activitySwipeStartRef = useRef<{ emoji: string; x: number; y: number } | null>(null);
+  const activitySwipeLockRef = useRef<"h" | "v" | null>(null);
   const todoInputRef = useRef<HTMLInputElement | null>(null);
   const [activityContextMenu, setActivityContextMenu] = useState<{
     x: number;
@@ -805,6 +641,8 @@ export default function DailyDiary({
     }
   });
   const selectedDateRef = useRef(selectedDate);
+  const ACTIVITY_SWIPE_THRESHOLD = 84;
+  const ACTIVITY_SWIPE_MAX = 120;
   const syncStateRef = useRef({
     todo: false,
     journal: false,
@@ -1348,28 +1186,16 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
 
     if (!user) {
       setIsLoadingTodos(false);
-      const seed = getSeedForDate(targetDate);
       const seededTodos = draftTodosByDate[targetDate];
       const seededJournal = draftJournalByDate[targetDate];
       const seededActivities = draftActivitiesByDate[targetDate];
 
       setTodos(sortTodosForDisplay(seededTodos ?? []));
-      setJournalText(seededJournal ?? (seed ? seed.memo.join("\n") : ""));
+      setJournalText(seededJournal ?? "");
       if (seededActivities?.length) {
         setActivities(
           seededActivities
             .map(normalizeDraftActivity)
-            .filter((item) => item.hours > 0)
-        );
-      } else if (seed) {
-        setActivities(
-          seed.activities
-            .map((item) => ({
-              ...item,
-              label: trimActivityLabel(item.label),
-              hours: normalizeActivityHours(item.hours),
-              startTime: formatStartTime(item.startTime)
-            }))
             .filter((item) => item.hours > 0)
         );
       } else {
@@ -1478,16 +1304,13 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       const activitiesByDate = Object.fromEntries(
         targetRange.map((day) => {
           const draftForDay = draftActivitiesByDate[day];
-          const seed = getSeedForDate(day);
           return [
-                day,
-	            draftForDay?.length
-	              ? draftForDay
-	                .map(normalizeDraftActivity)
-	                .filter((item) => item.hours > 0)
-	              : seed
-	                ? toSampleDraftActivities(day) ?? []
-	                : []
+            day,
+            draftForDay?.length
+              ? draftForDay
+                .map(normalizeDraftActivity)
+                .filter((item) => item.hours > 0)
+              : []
           ];
         })
       );
@@ -1495,8 +1318,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       targetRange.map((day) => {
         const draftMemo = draftJournalByDate[day];
         if (draftMemo !== undefined) return [day, draftMemo];
-        const seed = getSeedForDate(day);
-        return [day, seed ? seed.memo.join("\n") : ""];
+        return [day, ""];
       })
     );
       setMonthActivitiesByDate(activitiesByDate);
@@ -2363,6 +2185,64 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     event.preventDefault();
   };
 
+  const handleActivityTouchStart = (activity: UiActivity, event: TouchEvent<HTMLDivElement>) => {
+    if (isActivityLabelEditing(activity)) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("button,input,textarea,a,label")) return;
+    closeActivityContextMenu();
+    const touch = event.touches[0];
+    activitySwipeStartRef.current = {
+      emoji: activity.emoji,
+      x: touch.clientX,
+      y: touch.clientY
+    };
+    activitySwipeLockRef.current = null;
+  };
+
+  const handleActivityTouchMove = (activity: UiActivity, event: TouchEvent<HTMLDivElement>) => {
+    const start = activitySwipeStartRef.current;
+    if (!start || start.emoji !== activity.emoji) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+
+    if (activitySwipeLockRef.current === null) {
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+        activitySwipeLockRef.current = "h";
+      } else if (Math.abs(dy) > 8) {
+        activitySwipeLockRef.current = "v";
+        return;
+      } else {
+        return;
+      }
+    }
+
+    if (activitySwipeLockRef.current !== "h") return;
+
+    event.preventDefault();
+    const nextSwipe = Math.max(-ACTIVITY_SWIPE_MAX, Math.min(0, dx));
+    setActivitySwipeXByEmoji((prev) => {
+      if (prev[activity.emoji] === nextSwipe) return prev;
+      return { ...prev, [activity.emoji]: nextSwipe };
+    });
+  };
+
+  const handleActivityTouchEnd = (activity: UiActivity) => {
+    const start = activitySwipeStartRef.current;
+    if (!start || start.emoji !== activity.emoji) return;
+
+    const swipeX = activitySwipeXByEmoji[activity.emoji] ?? 0;
+    const shouldDelete = swipeX <= -ACTIVITY_SWIPE_THRESHOLD;
+
+    activitySwipeStartRef.current = null;
+    activitySwipeLockRef.current = null;
+    setActivitySwipeXByEmoji((prev) => ({ ...prev, [activity.emoji]: 0 }));
+
+    if (shouldDelete) {
+      void removeActivity(activity);
+    }
+  };
+
   const openActivityContextMenu = (activity: UiActivity, event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     setActivityContextMenu({ x: event.clientX, y: event.clientY, activity });
@@ -2932,9 +2812,13 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               {filteredActivities.length > 0 ? (
                 <div className="grid divide-y divide-[var(--border)]">
                   {filteredActivities.map((activity) => (
+                      (() => {
+                        const swipeX = activitySwipeXByEmoji[activity.emoji] ?? 0;
+                        const swipeProgress = Math.min(1, Math.abs(swipeX) / ACTIVITY_SWIPE_THRESHOLD);
+                        return (
                       <div
                         key={activity.emoji}
-                        className="px-0 py-1.5 cursor-grab active:cursor-grabbing"
+                        className="relative overflow-hidden px-0 py-1.5 cursor-grab active:cursor-grabbing"
                         draggable={!isActivityLabelEditing(activity)}
                         onDragStart={(event) => {
                           handleActivityDragStart();
@@ -2944,8 +2828,46 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                         onContextMenu={(event) => openActivityContextMenu(activity, event)}
                         onDragEnd={(event) => handleActivityDragEnd(activity, event)}
                       >
+                        {swipeX < -4 ? (
+                          <div
+                            className="absolute inset-0 flex items-center justify-end px-4"
+                            style={{
+                              background: "var(--danger)",
+                              opacity: swipeProgress
+                            }}
+                            aria-hidden="true"
+                          >
+                            <Trash2 className="h-4 w-4 text-white" />
+                          </div>
+                        ) : null}
+                        <div
+                          className="relative z-10 bg-[var(--bg)]"
+                          onTouchStart={(event) => handleActivityTouchStart(activity, event)}
+                          onTouchMove={(event) => handleActivityTouchMove(activity, event)}
+                          onTouchEnd={() => handleActivityTouchEnd(activity)}
+                          onTouchCancel={() => handleActivityTouchEnd(activity)}
+                          style={{
+                            transform: `translateX(${swipeX}px)`,
+                            transition:
+                              activitySwipeLockRef.current === "h"
+                                ? "none"
+                                : "transform 0.2s ease-out",
+                            touchAction: "pan-y"
+                          }}
+                        >
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void removeActivity(activity);
+                          }}
+                          className="absolute right-2 top-2 z-10 h-6 w-6 rounded-full border border-[var(--border)] bg-[var(--bg)] text-xs text-[var(--muted)] transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)]"
+                          aria-label="Delete activity"
+                        >
+                          ×
+                        </button>
                         {/* Row 1: [emoji] [−] [h] [+] [00:00] */}
-                        <div className="group flex items-center gap-2 px-3">
+                        <div className="group flex items-center gap-2 pl-3 pr-10">
                           <span className="w-6 text-center text-lg leading-none">{activity.emoji}</span>
                           <button
                             onClick={() => setActivityHours(activity, activity.hours - getActivityStepHours())}
@@ -3008,16 +2930,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                               <span className={`min-w-0 flex-1 break-all whitespace-pre-wrap ${activity.label ? "text-[var(--ink)]" : "text-[var(--muted)]"}`}>
                                 {activity.label ? activity.label : "Tap to add note..."}
                               </span>
-                              {activity.label && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); removeActivity(activity); }}
-                                  className="h-5 w-5 shrink-0 rounded text-xs text-[var(--muted)] hover:text-[var(--danger)]"
-                                  aria-label="Delete activity"
-                                  type="button"
-                                >
-                                  ×
-                                </button>
-                              )}
                             </div>
                           )}
                         </div>
@@ -3026,7 +2938,10 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                             {activityConflictWarnings[activity.emoji]}
                           </p>
                         ) : null}
+                        </div>
                       </div>
+                        );
+                      })()
                     ))}
                 </div>
               ) : (
