@@ -116,8 +116,7 @@ export function getPlanLimits(plan: UserSymbolPlan = "free"): PlanFeatures {
   return planFeatures[plan];
 }
 
-/** 기본 심볼 목록 (첫 사용자용) */
+/** 기본 심볼 목록 — 빈 상태로 시작 (사용자가 직접 추가) */
 export function getDefaultSymbols(): UserSymbol[] {
-  const defaults = ["💻", "🕍", "🔆", "🥋", "🏋️", "🍷", "🍻", "🍸", "🍺"];
-  return defaults.map((emoji, i) => ({ emoji, label: "", order: i }));
+  return [];
 }

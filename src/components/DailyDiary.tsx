@@ -132,7 +132,7 @@ const ACTIVITY_STEP_STORAGE_KEY = "diary-activity-step-minutes";
 
 const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const defaultActivities = ["💻", "🕍", "🔆", "🥋", "🏋️", "🍷", "🍻", "🍸", "🍺"];
+// 기본 활동 이모지 — 빈 상태로 시작 (사용자가 직접 추가)
 
 /** 캘린더 그리드용 날짜 배열 — 앞쪽 빈 칸(null) + 해당 월 일자들 (7열 그리드 맞추기) */
 function getMonthDaysForCalendar(baseMonth: string) {
@@ -562,10 +562,10 @@ export default function DailyDiary({
   const [todoUpdatedAt, setTodoUpdatedAt] = useState<string | null>(null);
   const [activityUpdatedAt, setActivityUpdatedAt] = useState<string | null>(null);
   const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
-  const [customEmoji, setCustomEmoji] = useState("📝");
+  const [customEmoji, setCustomEmoji] = useState("");
   const [customHours, setCustomHours] = useState("1");
   const [customStartTime, setCustomStartTime] = useState("00:00");
-  const [customTemplateName, setCustomTemplateName] = useState("Default");
+  const [customTemplateName, setCustomTemplateName] = useState("");
   const [activityLabelEditingByDate, setActivityLabelEditingByDate] = useState<Record<string, boolean>>({});
   const [todoRepeatDays, setTodoRepeatDays] = useState<number[]>([]);
   const [todoRepeatWeeks, setTodoRepeatWeeks] = useState<number>(TODO_REPEAT_WEEKS[1] ?? 1);
