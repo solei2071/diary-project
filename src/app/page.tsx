@@ -53,6 +53,8 @@ declare global {
   }
 }
 
+type AppLanguage = "en" | "ko";
+
 export default function Home() {
   // session: 로그인한 사용자 세션 (null = 비로그인)
   const [session, setSession] = useState<Session | null>(null);
@@ -63,6 +65,7 @@ export default function Home() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<"light" | "dark">("light");
+  const [appLanguage, setAppLanguage] = useState<AppLanguage>("en");
   const [symbolPlan, setSymbolPlan] = useState<UserSymbolPlan>("free");
   const [planInfo, setPlanInfo] = useState<PlanState>({
     plan: "free",
@@ -160,6 +163,19 @@ export default function Home() {
     const nextTheme = saved === "dark" || saved === "light" ? saved : preferDark ? "dark" : "light";
     setThemeMode(nextTheme);
     document.documentElement.classList.toggle("dark", nextTheme === "dark");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem("diary-language");
+    const nextLanguage: AppLanguage =
+      saved === "en" || saved === "ko"
+        ? saved
+        : window.navigator.language.toLowerCase().startsWith("ko")
+          ? "ko"
+          : "en";
+    setAppLanguage(nextLanguage);
+    document.documentElement.lang = nextLanguage;
   }, []);
 
   const closeSettings = () => {
@@ -358,6 +374,13 @@ export default function Home() {
     localStorage.setItem("diary-theme-mode", mode);
   };
 
+  const applyLanguage = (language: AppLanguage) => {
+    setAppLanguage(language);
+    if (typeof window === "undefined") return;
+    localStorage.setItem("diary-language", language);
+    document.documentElement.lang = language;
+  };
+
   const grantProAfterPurchase = useCallback(async () => {
     if (isPro) return;
     const nextPlan: UserSymbolPlan = "pro";
@@ -467,6 +490,7 @@ export default function Home() {
       ) === "email"
     : false;
   const isAdmin = isAdminUser(session?.user ?? null);
+  const t = (en: string, ko: string) => (appLanguage === "ko" ? ko : en);
 
   // 세션 로드 전에는 로딩 UI 표시
   if (!ready) {
@@ -476,7 +500,7 @@ export default function Home() {
   return (
     <ToastProvider>
     <div className="relative">
-      {/* 상단 고정 헤더: 로그인 시 이메일, 비로그인 시 로그인/회원가입 탭 */}
+      {/* 상단 고정 헤더 */}
       <section
         className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--bg)] px-4 py-3 backdrop-blur"
         style={{ paddingTop: "max(0.75rem, var(--safe-top))" }}
@@ -484,39 +508,42 @@ export default function Home() {
         <div
           className="mx-auto flex w-full max-w-5xl items-center justify-between overflow-visible rounded-full border border-[var(--border)] bg-[var(--bg)] px-1"
         >
-          <div className={`grid min-h-10 grow divide-x divide-[var(--border)] ${session ? "grid-cols-2" : "grid-cols-3"}`}>
+          <div className="flex min-h-10 grow">
+            {/* 비로그인 시: Sign up / Login 버튼 */}
             {!session && (
               <>
                 <button
-                  onClick={() => {
-                    setAuthMode("signup");
-                    closeSettings();
-                  }}
-                  className={`px-4 py-2 text-sm font-semibold ${
-                    authMode === "signup" ? "bg-[var(--primary)] text-white" : "bg-[var(--bg)] text-[var(--ink)]"
+                  onClick={() => { closeSettings(); setAuthMode("signup"); }}
+                  className={`flex w-full items-center justify-center px-4 py-2 text-sm font-semibold transition-colors ${
+                    authMode === "signup"
+                      ? "rounded-full bg-[var(--primary)] text-white"
+                      : "text-[var(--ink)]"
                   }`}
                 >
-                  Sign up
+                  {t("Sign up", "회원가입")}
                 </button>
                 <button
-                  onClick={() => {
-                    setAuthMode("login");
-                    closeSettings();
-                  }}
-                  className={`px-4 py-2 text-sm font-semibold ${
-                    authMode === "login" ? "bg-[var(--primary)] text-white" : "bg-[var(--bg)] text-[var(--ink)]"
+                  onClick={() => { closeSettings(); setAuthMode("login"); }}
+                  className={`flex w-full items-center justify-center px-4 py-2 text-sm font-semibold transition-colors ${
+                    authMode === "login"
+                      ? "rounded-full bg-[var(--primary)] text-white"
+                      : "text-[var(--ink)]"
                   }`}
                 >
-                  Login
+                  {t("Login", "로그인")}
                 </button>
               </>
             )}
             <button
               onClick={() => setIsSettingsOpen((prev) => !prev)}
-              className="flex items-center justify-center gap-1 px-4 py-2 text-sm font-semibold text-[var(--ink)]"
+              className={`flex w-full items-center justify-center gap-1 px-4 py-2 text-sm font-semibold transition-colors ${
+                isSettingsOpen
+                  ? "rounded-full bg-[var(--primary)] text-white"
+                  : "text-[var(--ink)]"
+              }`}
             >
               <Settings className="h-4 w-4" />
-              Settings
+              {t("Settings", "설정")}
             </button>
           </div>
           {session ? (
@@ -525,9 +552,9 @@ export default function Home() {
                 closeSettings();
                 void signOut();
               }}
-              className="ml-2 rounded-full px-3 py-1 text-xs font-semibold text-[var(--muted)]"
+              className="ml-2 shrink-0 rounded-full px-3 py-1 text-xs font-semibold text-[var(--muted)]"
             >
-              Sign out
+              {t("Sign out", "로그아웃")}
             </button>
           ) : null}
           {isSettingsOpen ? (
@@ -541,7 +568,7 @@ export default function Home() {
                       : "text-[var(--muted)]"
                   }`}
                 >
-                  Settings
+                  {t("Settings", "설정")}
                 </button>
                 <button
                   onClick={() => session && setSettingsPanel("account")}
@@ -550,12 +577,12 @@ export default function Home() {
                     !session ? "cursor-not-allowed text-[var(--muted)]" : "text-[var(--muted)]"
                   } ${session && settingsPanel === "account" ? "bg-[var(--bg-hover)] text-[var(--ink)]" : ""}`}
                 >
-                  Account
+                  {t("Account", "계정")}
                 </button>
               </div>
               {settingsPanel === "settings" ? (
                 <>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">Theme</p>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Theme", "테마")}</p>
                   <div className="mb-2 flex items-center gap-1 text-xs">
                     <button
                       onClick={() => applyThemeMode("light")}
@@ -566,7 +593,7 @@ export default function Home() {
                       }`}
                       aria-label="Set light mode"
                     >
-                      <Sun className="h-3.5 w-3.5" /> Light
+                      <Sun className="h-3.5 w-3.5" /> {t("Light", "라이트")}
                     </button>
                     <button
                       onClick={() => applyThemeMode("dark")}
@@ -577,20 +604,45 @@ export default function Home() {
                       }`}
                       aria-label="Set dark mode"
                     >
-                      <Moon className="h-3.5 w-3.5" /> Dark
+                      <Moon className="h-3.5 w-3.5" /> {t("Dark", "다크")}
+                    </button>
+                  </div>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Language", "언어")}</p>
+                  <div className="mb-2 flex items-center gap-1 text-xs">
+                    <button
+                      onClick={() => applyLanguage("en")}
+                      className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
+                        appLanguage === "en"
+                          ? "border-[var(--primary)] text-[var(--ink)]"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                      aria-label="Set English language"
+                    >
+                      EN
+                    </button>
+                    <button
+                      onClick={() => applyLanguage("ko")}
+                      className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
+                        appLanguage === "ko"
+                          ? "border-[var(--primary)] text-[var(--ink)]"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                      aria-label="Set Korean language"
+                    >
+                      KO
                     </button>
                   </div>
                   {/* 알림 설정 */}
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">Notifications</p>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Notifications", "알림")}</p>
                   <div className="mb-2 rounded-md border border-[var(--border)] p-2">
                     {notifPermission === "unsupported" ? (
-                      <p className="text-[11px] text-[var(--muted)]">Notifications not supported in this browser.</p>
+                      <p className="text-[11px] text-[var(--muted)]">{t("Notifications not supported in this browser.", "이 브라우저에서는 알림을 지원하지 않습니다.")}</p>
                     ) : notifPermission === "denied" ? (
-                      <p className="text-[11px] text-[var(--muted)]">Notifications are blocked. Allow them in browser settings.</p>
+                      <p className="text-[11px] text-[var(--muted)]">{t("Notifications are blocked. Allow them in browser settings.", "알림이 차단되어 있습니다. 브라우저 설정에서 허용해 주세요.")}</p>
                     ) : (
                       <>
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs text-[var(--ink)]">Daily reminder</span>
+                          <span className="text-xs text-[var(--ink)]">{t("Daily reminder", "일일 리마인더")}</span>
                           <button
                             type="button"
                             onClick={() => void handleNotifToggle()}
@@ -603,7 +655,7 @@ export default function Home() {
                         </div>
                         {notifSettings.enabled && (
                           <div className="mt-2 flex items-center gap-2">
-                            <span className="text-[11px] text-[var(--muted)]">Time</span>
+                            <span className="text-[11px] text-[var(--muted)]">{t("Time", "시간")}</span>
                             <input
                               type="time"
                               value={notifSettings.reminderTime}
@@ -613,12 +665,12 @@ export default function Home() {
                           </div>
                         )}
                         <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
-                          Shows a reminder to record your day at the set time.
+                          {t("Shows a reminder to record your day at the set time.", "설정한 시간에 오늘 기록을 남기도록 리마인더를 표시합니다.")}
                         </p>
                       </>
                     )}
                   </div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">Plan</p>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Plan", "플랜")}</p>
                   <div className="mb-2 rounded-md border border-[var(--border)] p-2">
                     <div className="mb-2 flex items-center justify-between gap-2 text-xs">
                       <span className="text-[var(--ink)]">
@@ -637,7 +689,7 @@ export default function Home() {
                           onClick={() => void startUnlockCheckout()}
                           className="mt-2 w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white"
                         >
-                          Unlock Pro
+                          {t("Unlock Pro", "Pro 잠금 해제")}
                         </button>
                         <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">Unlock Pro to remove ads.</p>
                       </>
@@ -656,7 +708,7 @@ export default function Home() {
                       }}
                       className="mb-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)]"
                     >
-                      Admin
+                      {t("Admin", "관리자")}
                     </button>
                   ) : null}
                   {planError && <p className="mb-2 text-xs text-[var(--danger)]">{planError}</p>}
@@ -865,25 +917,9 @@ export default function Home() {
                     </div>
                   ) : (
                     <>
-                      <p className="mb-2 text-xs text-[var(--muted)]">Sign in to view account info.</p>
-                      <button
-                        onClick={() => {
-                          setAuthMode("login");
-                          closeSettings();
-                        }}
-                        className="mb-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)]"
-                      >
-                        Login
-                      </button>
-                      <button
-                        onClick={() => {
-                          setAuthMode("signup");
-                          closeSettings();
-                        }}
-                        className="w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)]"
-                      >
-                        Sign up
-                      </button>
+                      <p className="mb-2 text-xs text-[var(--muted)]">
+                        {t("Sign in to view account info.", "계정 정보를 보려면 로그인해 주세요.")}
+                      </p>
                     </>
                   )}
                 </>
@@ -893,7 +929,7 @@ export default function Home() {
                   onClick={() => void signOut()}
                   className="mt-2 w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white"
                 >
-                  Sign out
+                  {t("Sign out", "로그아웃")}
                 </button>
               ) : null}
             </div>
