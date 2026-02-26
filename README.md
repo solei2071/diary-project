@@ -39,7 +39,7 @@
    ```bash
    npm run dev
    ```
-   브라우저에서 `http://localhost:3000` 열기
+   브라우저에서 `http://localhost:5000` 열기
 6. iPhone 웹앱 사용
    - Safari에서 페이지 열기 → 공유 버튼 → "홈 화면에 추가"
    - `manifest.webmanifest`와 iOS 용 메타 태그가 적용되어 앱 화면처럼 표시됩니다.
