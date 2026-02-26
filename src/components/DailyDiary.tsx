@@ -563,8 +563,8 @@ export default function DailyDiary({
   const [activityUpdatedAt, setActivityUpdatedAt] = useState<string | null>(null);
   const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
   const [customEmoji, setCustomEmoji] = useState("");
-  const [customHours, setCustomHours] = useState("1");
-  const [customStartTime, setCustomStartTime] = useState("00:00");
+  const [customHours, setCustomHours] = useState("");
+  const [customStartTime, setCustomStartTime] = useState("");
   const [customTemplateName, setCustomTemplateName] = useState("");
   const [activityLabelEditingByDate, setActivityLabelEditingByDate] = useState<Record<string, boolean>>({});
   const [todoRepeatDays, setTodoRepeatDays] = useState<number[]>([]);
@@ -2587,7 +2587,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
               <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
                 <span className="n-h2">Activity Log</span>
-                <span className="n-label normal-case tracking-normal">Hours</span>
                 {canUseTemplates ? (
                   <button
                     onClick={() => setIsTemplatePanelOpen((prev) => !prev)}

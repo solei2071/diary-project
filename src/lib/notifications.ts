@@ -16,7 +16,7 @@ export type NotificationSettings = {
 
 export const DEFAULT_SETTINGS: NotificationSettings = {
   enabled: false,
-  reminderTime: "20:00",
+  reminderTime: "",
   lastShownDate: null
 };
 
