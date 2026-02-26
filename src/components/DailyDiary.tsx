@@ -381,7 +381,7 @@ function TimeInput({ value, onCommit, onAutoAdvance, ariaLabel }: {
       onChange={(e) => handleChange(e.target.value)} onBlur={handleBlur} onKeyDown={handleKeyDown}
       onFocus={() => setTimeout(() => inputRef.current?.select(), 0)}
       className="shrink-0 rounded border border-[var(--border)] bg-transparent text-center text-[var(--ink)] outline-none focus:border-[var(--primary)]"
-      style={{ width: "5rem", height: "1.75rem", padding: "0 0.25rem", fontSize: "0.75rem" }}
+      style={{ width: "4rem", height: "1.75rem", padding: "0 0.25rem", fontSize: "0.75rem" }}
       aria-label={ariaLabel} placeholder="00:00" maxLength={5} />
   );
 }
@@ -2866,7 +2866,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           ×
                         </button>
                         {/* Row 1: [emoji] [−] [h] [+] [00:00] */}
-                        <div className="group flex items-center gap-2 pl-3 pr-10">
+                        <div className="group flex items-center gap-1 pl-3 pr-10">
                           <span className="w-6 text-center text-lg leading-none">{activity.emoji}</span>
                           <button
                             onClick={() => setActivityHours(activity, activity.hours - getActivityStepHours())}
@@ -2874,7 +2874,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           >
                             −
                           </button>
-                          <span className="w-14 shrink-0 whitespace-nowrap text-center text-sm font-semibold text-[var(--ink)]">{formatHoursLabel(activity.hours)}</span>
+                          <span className="w-12 shrink-0 whitespace-nowrap text-center text-sm font-semibold text-[var(--ink)]">{formatHoursLabel(activity.hours)}</span>
                           <button
                             onClick={() => setActivityHours(activity, activity.hours + getActivityStepHours())}
                             className="n-btn-ghost h-6 w-6 shrink-0 p-0 text-sm leading-none"
