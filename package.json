@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "next dev -p 5000",
-    "dev:clean": "rm -rf .next && next dev -p 5000",
+    "dev": "next dev -p 3002",
+    "dev:clean": "rm -rf .next && next dev -p 3002",
     "build": "next build",
-    "start": "next start -p 5000",
+    "start": "next start -p 3002",
     "lint": "next lint"
   },
   "dependencies": {
