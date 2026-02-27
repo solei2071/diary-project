@@ -52,7 +52,6 @@ function toLocalDateString(date: Date): string {
 
 const initialDate = toLocalDateString(new Date());
 const NOTE_CHAR_LIMIT = 2000;
-const ACTIVITY_TEMPLATE_STORAGE_KEY = "diary-activity-templates";
 const TODO_REPEAT_WEEKS = [1, 2, 3, 4, 5];
 const TODO_REPEAT_DAY_LABELS = [
   { value: 1, label: "Mon" },
@@ -196,16 +195,6 @@ type UiActivityDraft = {
   end_time?: string;
 };
 
-type ActivityTemplate = {
-  id: string;
-  name: string;
-  emoji: string;
-  hours: number;
-  label: string;
-  startTime?: string;
-  endTime?: string;
-};
-
 type SyncScope = "journal" | "todo" | "activity";
 type SyncConflictState = {
   scope: SyncScope;
@@ -245,50 +234,6 @@ const normalizeClockValue = (value?: string) => {
 };
 
 const formatStartTime = (value?: string) => normalizeClockValue(value);
-
-const normalizeStoredTemplate = (entry: unknown): ActivityTemplate | null => {
-  if (
-    typeof entry !== "object" ||
-    entry === null ||
-    Array.isArray(entry)
-  ) {
-    return null;
-  }
-
-  const row = entry as Record<string, unknown>;
-  if (
-    typeof row.emoji !== "string" ||
-    !row.emoji.trim() ||
-    typeof row.name !== "string" ||
-    !row.name.trim()
-  ) {
-    return null;
-  }
-
-  const rawStart = typeof row.startTime === "string" ? row.startTime : "00:00";
-  const rawEnd = typeof row.endTime === "string" ? row.endTime : "00:00";
-  const safeStart = rawStart.trim().match(/^\d{1,2}:\d{2}$/) ? rawStart.trim() : "00:00";
-  const safeEnd = rawEnd.trim().match(/^\d{1,2}:\d{2}$/) ? rawEnd.trim() : "00:00";
-
-  const rawId = typeof row.id === "string" ? row.id.trim() : "";
-  const id = rawId.length > 0
-    ? rawId
-    : `template-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
-
-  const rawHours = Number(row.hours ?? 0);
-  const hours = normalizeActivityHours(Number.isFinite(rawHours) ? rawHours : 0);
-  const label = typeof row.label === "string" ? row.label : "";
-
-  return {
-    id,
-    name: row.name.trim(),
-    emoji: row.emoji,
-    hours,
-    label,
-    startTime: safeStart,
-    endTime: safeEnd
-  };
-};
 
 const normalizeActivitySource = (row: DailyActivityRow): UiActivity => ({
   id: row.id,
@@ -565,7 +510,6 @@ export default function DailyDiary({
   const [customEmoji, setCustomEmoji] = useState("");
   const [customHours, setCustomHours] = useState("");
   const [customStartTime, setCustomStartTime] = useState("");
-  const [customTemplateName, setCustomTemplateName] = useState("");
   const [activityLabelEditingByDate, setActivityLabelEditingByDate] = useState<Record<string, boolean>>({});
   const [todoRepeatDays, setTodoRepeatDays] = useState<number[]>([]);
   const [todoRepeatWeeks, setTodoRepeatWeeks] = useState<number>(TODO_REPEAT_WEEKS[1] ?? 1);
@@ -598,7 +542,6 @@ export default function DailyDiary({
   const [isActivityStepPickerOpen, setIsActivityStepPickerOpen] = useState(false);
   const [dashboardQuery, setDashboardQuery] = useState("");
   const [activityLogQuery, setActivityLogQuery] = useState("");
-  const [isTemplatePanelOpen, setIsTemplatePanelOpen] = useState(false);
   const [userSymbols, setUserSymbols] = useState<UserSymbol[]>(getDefaultSymbols);
   const [isSymbolPickerOpen, setIsSymbolPickerOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -623,23 +566,8 @@ export default function DailyDiary({
   );
   const symbolLimit = planLimits.symbolLimit;
   const canSearchSummary = planLimits.canSearch;
-  const canUseTemplates = planLimits.canTemplates;
   const hasAdvancedSummary = planLimits.canAdvancedSummary;
   const canTodoRepeat = planLimits.canTodoRepeat;
-  const [activityTemplates, setActivityTemplates] = useState<ActivityTemplate[]>(() => {
-    try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem(ACTIVITY_TEMPLATE_STORAGE_KEY) : null;
-        const parsed = raw ? (JSON.parse(raw) as Array<unknown>) : [];
-        if (!Array.isArray(parsed)) {
-          return [];
-        }
-        return parsed
-          .map(normalizeStoredTemplate)
-          .filter((item): item is ActivityTemplate => item !== null);
-    } catch {
-      return [];
-    }
-  });
   const selectedDateRef = useRef(selectedDate);
   const ACTIVITY_SWIPE_THRESHOLD = 84;
   const ACTIVITY_SWIPE_MAX = 120;
@@ -665,24 +593,13 @@ export default function DailyDiary({
   }, [symbolPlan, planLimits.symbolLimit]);
 
   useEffect(() => {
-    if (!canUseTemplates) {
-      if (activityTemplates.length > 0) {
-        setActivityTemplates([]);
-        try {
-          localStorage.removeItem(ACTIVITY_TEMPLATE_STORAGE_KEY);
-        } catch {
-          // no-op
-        }
-      }
-      return;
-    }
-
+    if (typeof window === "undefined") return;
     try {
-      localStorage.setItem(ACTIVITY_TEMPLATE_STORAGE_KEY, JSON.stringify(activityTemplates));
+      localStorage.removeItem("diary-activity-templates");
     } catch {
       // no-op
     }
-  }, [activityTemplates, canUseTemplates]);
+  }, []);
 
   const calendarDays = useMemo(() => getMonthDaysForCalendar(currentMonth), [currentMonth]);
 
@@ -1050,8 +967,6 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       return emoji.includes(normalizedActivityLogQuery) || label.includes(normalizedActivityLogQuery);
     });
   }, [activities, normalizedActivityLogQuery]);
-
-  const activeTemplateItems = useMemo(() => (canUseTemplates ? activityTemplates : []), [activityTemplates, canUseTemplates]);
 
   const dashboardTotalHours = useMemo(
     () =>
@@ -2001,59 +1916,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     }));
   };
 
-  const addTemplateActivity = (template: ActivityTemplate) => {
-    const keyItem = activities.find((item) => item.emoji === template.emoji);
-    const startTime = normalizeStartTimeInput(template.startTime ?? "00:00");
-    const calculatedEndTime = calculateEndTimeFromHours(startTime, template.hours) ?? "00:00";
-    const endTime = normalizeStartTimeInput(template.endTime ?? calculatedEndTime);
-    updateActivity(
-      template.emoji,
-      keyItem ? keyItem.hours + template.hours : template.hours,
-      template.label,
-      startTime,
-      endTime
-    );
-    setActivityLabelEditingByDate((prev) => ({
-      ...prev,
-      [template.emoji]: Boolean(template.label)
-    }));
-  };
-
-  const addTemplate = () => {
-    if (!canUseTemplates) return;
-    const emoji = customEmoji.trim();
-    if (!emoji) {
-      setActivityError("Please enter an emoji.");
-      return;
-    }
-
-    const parsed = parseActivityDurationInput(customHours);
-    if (!parsed || parsed.hours <= 0) {
-      setActivityError("Invalid duration format. Use hours/minutes or HH:MM - HH:MM.");
-      return;
-    }
-
-    const startTime = parsed.startTime ?? customStartTime;
-    const endTime = parsed.endTime ?? calculateEndTimeFromHours(startTime, parsed.hours) ?? "00:00";
-    const name = customTemplateName.trim() || `${emoji} ${formatHoursLabel(parsed.hours)}`;
-    const nextTemplate: ActivityTemplate = {
-      id: makeLocalTodoId(),
-      name,
-      emoji,
-      hours: normalizeHourInput(parsed.hours),
-      label: "",
-      startTime: normalizeStartTimeInput(startTime),
-      endTime: normalizeStartTimeInput(endTime)
-    };
-    setActivityTemplates((prev) => [nextTemplate, ...prev]);
-    setCustomTemplateName("Default");
-    setActivityError("");
-  };
-
-  const removeActivityTemplate = (templateId: string) => {
-    setActivityTemplates((prev) => prev.filter((item) => item.id !== templateId));
-  };
-
   /** 사용자 입력 이모지+시간으로 활동 추가 */
   const addCustomActivity = async () => {
     const emoji = customEmoji.trim();
@@ -2585,17 +2447,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
           {/* ── Activity Log ── */}
           <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
-              <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
+              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-3">
                 <span className="n-h2">Activity Log</span>
-                {canUseTemplates ? (
-                  <button
-                    onClick={() => setIsTemplatePanelOpen((prev) => !prev)}
-                    className="ml-2 inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/12 px-2 py-1 text-xs font-semibold text-[var(--primary)]"
-                    aria-label="Toggle activity templates"
-                  >
-                    Templates
-                  </button>
-                ) : null}
                 <button
                   onClick={() => setIsSymbolPickerOpen((prev) => !prev)}
                   className="ml-auto inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/12 px-2 py-1 text-xs font-semibold text-[var(--primary)]"
@@ -2744,57 +2597,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       Add
                     </button>
                   </div>
-                  {canUseTemplates ? (
-                    <div className="mt-2 flex gap-2">
-                      <input
-                        value={customTemplateName}
-                        onChange={(e) => setCustomTemplateName(e.target.value.slice(0, 20))}
-                        className="n-input flex-1"
-                        placeholder="Template name"
-                        aria-label="Template name"
-                      />
-                      <button onClick={() => addTemplate()} className="n-btn-ghost shrink-0">
-                        Save as template
-                      </button>
-                    </div>
-                  ) : null}
                 </div>
-
-                {isTemplatePanelOpen && canUseTemplates ? (
-                  <div className="border-b border-[var(--border)] px-3 py-3">
-                    <p className="mb-2 text-xs leading-5 font-semibold text-[var(--ink)]">Templates</p>
-                    {activeTemplateItems.length === 0 ? (
-                      <p className="text-xs leading-5 text-[var(--muted)]">No templates yet.</p>
-                    ) : (
-                      <div className="grid gap-1.5">
-                        {activeTemplateItems.map((template) => (
-                          <div
-                            key={template.id}
-                            className="flex items-center gap-2 rounded border border-[var(--border)] px-2 py-1.5"
-                          >
-                            <button
-                              onClick={() => addTemplateActivity(template)}
-                              className="flex-1 text-left text-xs leading-5 text-[var(--ink)]"
-                            >
-                              <span className="mr-2">{template.emoji}</span>
-                              <span className="font-semibold">{template.name}</span>
-                              <span className="ml-2 text-[var(--muted)]">
-                                {formatHoursLabel(template.hours)} [{template.startTime} - {template.endTime}]
-                              </span>
-                            </button>
-                            <button
-                              onClick={() => removeActivityTemplate(template.id)}
-                              className="n-btn-danger h-6 w-6 shrink-0 p-0 rounded-full"
-                              aria-label={`Remove ${template.name}`}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
 
               {/* 기록된 활동 */}
             <div

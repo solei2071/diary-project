@@ -96,6 +96,30 @@ export const emojiCategories: EmojiCategory[] = [
     ],
   },
   {
+    name: "✨",
+    icon: "✨",
+    emojis: [
+      "🏄",
+      "🧘",
+      "🏋️",
+      "🥋",
+      "🏊",
+      "✍️",
+      "🐶",
+      "🐱",
+      "🥂",
+      "☕",
+      "🥙",
+      "🎻",
+      "🎹",
+      "📷",
+      "🖥️",
+      "❤️",
+      "✨",
+      "💻"
+    ],
+  },
+  {
     name: "Travel",
     icon: "✈️",
     emojis: [
