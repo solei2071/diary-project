@@ -540,6 +540,12 @@ export default function DailyDiary({
     return 15;
   });
   const [isActivityStepPickerOpen, setIsActivityStepPickerOpen] = useState(false);
+  const toggleSymbolPicker = useCallback(() => {
+    setIsSymbolPickerOpen((prev) => !prev);
+  }, []);
+  const closeSymbolPicker = useCallback(() => {
+    setIsSymbolPickerOpen(false);
+  }, []);
   const [dashboardQuery, setDashboardQuery] = useState("");
   const [activityLogQuery, setActivityLogQuery] = useState("");
   const [userSymbols, setUserSymbols] = useState<UserSymbol[]>(getDefaultSymbols);
@@ -565,6 +571,14 @@ export default function DailyDiary({
     [symbolPlan, planFeaturesOverride]
   );
   const symbolLimit = planLimits.symbolLimit;
+  const orderedUserSymbols = useMemo(
+    () => [...userSymbols].sort((a, b) => a.order - b.order),
+    [userSymbols]
+  );
+  const handleSymbolPickerSymbolsChange = useCallback((updated: UserSymbol[]) => {
+    setUserSymbols(updated);
+    saveUserSymbols(updated, symbolPlan, planLimits.symbolLimit);
+  }, [symbolPlan, planLimits.symbolLimit]);
   const canSearchSummary = planLimits.canSearch;
   const hasAdvancedSummary = planLimits.canAdvancedSummary;
   const canTodoRepeat = planLimits.canTodoRepeat;
@@ -2339,9 +2353,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               {isAddingTodo ? (
                 <div className="px-3 py-3">
                   <div className="mb-2 flex flex-wrap gap-1.5">
-                    {[...userSymbols]
-                      .sort((a, b) => a.order - b.order)
-                      .map((symbol) => (
+                    {orderedUserSymbols.map((symbol) => (
                         <button
                           key={symbol.emoji}
                           type="button"
@@ -2450,7 +2462,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-3">
                 <span className="n-h2">Activity Log</span>
                 <button
-                  onClick={() => setIsSymbolPickerOpen((prev) => !prev)}
+                  onClick={toggleSymbolPicker}
                   className="ml-auto inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/12 px-2 py-1 text-xs font-semibold text-[var(--primary)]"
                   aria-label="Customize symbols"
                 >
@@ -2525,11 +2537,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     currentSymbols={userSymbols}
                     maxSymbols={symbolLimit}
                     labelCharacterLimit={planLimits.labelCharacterLimit}
-                    onSymbolsChange={(updated) => {
-                      setUserSymbols(updated);
-                      saveUserSymbols(updated, symbolPlan, planLimits.symbolLimit);
-                    }}
-                    onClose={() => setIsSymbolPickerOpen(false)}
+                    onSymbolsChange={handleSymbolPickerSymbolsChange}
+                    onClose={closeSymbolPicker}
                   />
                 </div>
               )}
@@ -2540,9 +2549,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 {/* Quick emoji buttons */}
                 <div className="max-h-28 overflow-y-auto px-3 py-3">
                   <div className="flex flex-wrap gap-1.5">
-                    {[...userSymbols]
-                      .sort((a, b) => a.order - b.order)
-                      .map((symbol) => {
+                    {orderedUserSymbols.map((symbol) => {
                       const recorded = activities.find((item) => item.emoji === symbol.emoji);
                       return (
                         <button

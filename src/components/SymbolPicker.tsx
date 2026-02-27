@@ -7,6 +7,7 @@
 "use client";
 
 import {
+  memo,
   useEffect,
   useMemo,
   useRef,
@@ -27,7 +28,7 @@ type SymbolPickerProps = {
   labelCharacterLimit?: number;
 };
 
-export default function SymbolPicker({
+function SymbolPicker({
   currentSymbols,
   onSymbolsChange,
   onClose,
@@ -472,3 +473,5 @@ export default function SymbolPicker({
     </div>
   );
 }
+
+export default memo(SymbolPicker);
