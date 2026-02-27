@@ -281,23 +281,22 @@ function SymbolPicker({
 
       {/* ── Category Tabs ── */}
       {!searchQuery && (
-        <div className="n-category-tabs mb-3">
-          {emojiCategories.map((cat) => (
-            <button
-              key={cat.name}
-              onClick={() => setActiveCategory(cat.name)}
-              className={`n-btn-ghost shrink-0 px-2.5 py-1.5 text-sm ${
-                activeCategory === cat.name
-                  ? "bg-[var(--bg-hover)] font-semibold"
-                  : ""
-              }`}
-              title={cat.name}
-            >
-              <span className="mr-1">{cat.icon}</span>
-              <span className="hidden sm:inline">{cat.name}</span>
-            </button>
-          ))}
-        </div>
+      <div className="n-category-tabs mb-3">
+        {emojiCategories.map((cat) => (
+          <button
+            key={cat.name}
+            onClick={() => setActiveCategory(cat.name)}
+            className={`n-btn-ghost shrink-0 px-2.5 py-1.5 text-sm ${
+              activeCategory === cat.name
+                ? "bg-[var(--bg-hover)] font-semibold"
+                : ""
+            }`}
+            aria-label={cat.name}
+          >
+            <span className="mr-1">{cat.icon}</span>
+          </button>
+        ))}
+      </div>
       )}
 
       {/* ── Emoji Grid ── */}
