@@ -206,6 +206,7 @@ type Props = {
   onRequestAuth: () => void; // 비로그인 시 저장 요청 시 부모가 로그인 모달 띄우도록 호출
   symbolPlan?: UserSymbolPlan;
   planFeatures?: PlanFeatures;
+  appLanguage?: "en" | "ko";
 };
 
 /** 시간 값을 분 단위로 정규화 (0.0167h=1m) */
@@ -462,7 +463,8 @@ export default function DailyDiary({
   session,
   onRequestAuth,
   symbolPlan: symbolPlanOverride,
-  planFeatures: planFeaturesOverride
+  planFeatures: planFeaturesOverride,
+  appLanguage = "en"
 }: Props) {
   const user = session?.user ?? null;
   const isGuest = !user;
@@ -2458,17 +2460,17 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           <div className="n-divider" />
 
           {/* ── Activity Log ── */}
-          <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
-              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-3">
-                <span className="n-h2">Activity Log</span>
-                <button
-                  onClick={toggleSymbolPicker}
-                  className="ml-auto inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/12 px-2 py-1 text-xs font-semibold text-[var(--primary)]"
-                  aria-label="Customize symbols"
-                >
-                  <Palette className="h-3.5 w-3.5" />
-                  <span>Customize</span>
-                </button>
+      <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-3">
+        <span className="n-h2">Activity Log</span>
+        <button
+          onClick={toggleSymbolPicker}
+          className="ml-auto inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/12 px-2 py-1 text-xs font-semibold text-[var(--primary)]"
+          aria-label={appLanguage === "ko" ? "심볼 관리" : "Customize symbols"}
+        >
+          <Palette className="h-3.5 w-3.5" />
+          <span>{appLanguage === "ko" ? "심볼 관리" : "Customize"}</span>
+        </button>
                 <button
                   onClick={() => setIsActivityStepPickerOpen((prev) => !prev)}
                   className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--ink)] transition hover:bg-[var(--bg-hover)]"
@@ -2535,6 +2537,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 <div className="border-b border-[var(--border)] bg-[var(--bg-secondary)]">
                   <SymbolPicker
                     currentSymbols={userSymbols}
+                    appLanguage={appLanguage}
                     maxSymbols={symbolLimit}
                     labelCharacterLimit={planLimits.labelCharacterLimit}
                     onSymbolsChange={handleSymbolPickerSymbolsChange}

@@ -26,6 +26,7 @@ type SymbolPickerProps = {
   onClose: () => void;
   maxSymbols?: number;
   labelCharacterLimit?: number;
+  appLanguage?: "en" | "ko";
 };
 
 function SymbolPicker({
@@ -33,8 +34,11 @@ function SymbolPicker({
   onSymbolsChange,
   onClose,
   maxSymbols: maxSymbolsOverride,
-  labelCharacterLimit = 30
+  labelCharacterLimit = 30,
+  appLanguage = "en"
 }: SymbolPickerProps) {
+  const isKorean = appLanguage === "ko";
+  const t = (en: string, ko: string) => (isKorean ? ko : en);
   const [activeCategory, setActiveCategory] = useState(emojiCategories[0].name);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingLabels, setEditingLabels] = useState<Record<string, string>>({});
@@ -81,7 +85,7 @@ function SymbolPicker({
       setLimitReachedMessage("");
     } else {
       if (isLimitReached) {
-        setLimitReachedMessage(`Maximum ${maxSymbols} symbols reached`);
+        setLimitReachedMessage(t(`Maximum ${maxSymbols} symbols reached`, `기호는 최대 ${maxSymbols}개까지 선택할 수 있어요`));
         return;
       }
       // 추가
@@ -164,12 +168,12 @@ function SymbolPicker({
 
   useEffect(() => {
     if (isLimitReached) {
-      setLimitReachedMessage(`Maximum ${maxSymbols} symbols reached`);
+      setLimitReachedMessage(isKorean ? `기호는 최대 ${maxSymbols}개까지 선택할 수 있어요` : `Maximum ${maxSymbols} symbols reached`);
       return;
     }
 
     setLimitReachedMessage("");
-  }, [isLimitReached, maxSymbols]);
+  }, [isLimitReached, isKorean, maxSymbols]);
 
   const moveSymbolToIndex = (emoji: string, targetIndex: number) => {
     const sourceIndex = orderedSymbols.findIndex((item) => item.emoji === emoji);
@@ -237,7 +241,7 @@ function SymbolPicker({
     <div className="px-3 py-3">
       {/* ── Header ── */}
       <div className="mb-3 flex items-center justify-between">
-        <span className="n-h2">Customize Symbols</span>
+        <span className="n-h2">{t("Customize Symbols", "심볼 관리")}</span>
         <span className="text-xs text-[var(--muted)]">
           {currentSymbols.length}/{maxSymbols}
         </span>
@@ -247,7 +251,7 @@ function SymbolPicker({
         <button
           onClick={onClose}
           className="n-btn-ghost h-7 w-7 p-0"
-          aria-label="Close"
+          aria-label={t("Close", "닫기")}
         >
           <X className="mx-auto h-4 w-4" />
         </button>
@@ -262,18 +266,18 @@ function SymbolPicker({
           onChange={(e) => setSearchQuery(e.target.value)}
           className="n-input w-full"
           style={{ paddingLeft: "2.5rem" }}
-          placeholder="Search emojis... (e.g. gym, coffee, music)"
-          aria-label="Search emojis"
+          placeholder={t("Search emojis... (e.g. gym, coffee, music)", "이모지 검색... (예: 헬스, 커피, 음악)")}
+          aria-label={t("Search emojis", "이모지 검색")}
         />
         {searchQuery && (
-          <button
-            onClick={() => {
-              setSearchQuery("");
-              searchRef.current?.focus();
-            }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[var(--muted)] hover:text-[var(--ink)]"
-            aria-label="Clear search"
-          >
+            <button
+              onClick={() => {
+                setSearchQuery("");
+                searchRef.current?.focus();
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[var(--muted)] hover:text-[var(--ink)]"
+              aria-label={t("Clear search", "검색어 지우기")}
+            >
             <X className="h-3.5 w-3.5" />
           </button>
         )}
@@ -312,10 +316,10 @@ function SymbolPicker({
               } ${isLimitReached && !selectedSet.has(emoji) ? "opacity-45 cursor-not-allowed" : ""}`}
 	              title={
 	                selectedSet.has(emoji)
-	                  ? `Remove ${emoji}`
+	                  ? t(`Remove ${emoji}`, `${emoji} 삭제`)
 	                  : isLimitReached
-	                    ? `Maximum ${maxSymbols} symbols reached`
-	                    : `Add ${emoji}`
+	                    ? t(`Maximum ${maxSymbols} symbols reached`, `기호는 최대 ${maxSymbols}개까지 선택할 수 있어요`)
+	                    : t(`Add ${emoji}`, `${emoji} 추가`)
 	              }
             >
               {emoji}
@@ -323,7 +327,7 @@ function SymbolPicker({
           ))
         ) : (
           <p className="n-empty col-span-full py-4 text-center">
-            {searchQuery ? "No emojis found" : "Select a category"}
+            {searchQuery ? t("No emojis found", "이모지를 찾을 수 없습니다") : t("Select a category", "카테고리를 선택해 주세요")}
           </p>
         )}
       </div>
@@ -332,9 +336,9 @@ function SymbolPicker({
       {currentSymbols.length > 0 && (
         <div>
           <div className="mb-2 flex items-center gap-2">
-            <span className="n-label">Your Symbols</span>
+            <span className="n-label">{t("Your Symbols", "내 심볼")}</span>
             <span className="text-xs text-[var(--muted)]">
-              {currentSymbols.length} selected
+              {currentSymbols.length} {t("selected", "개 선택됨")}
             </span>
           </div>
           <div
@@ -368,8 +372,8 @@ function SymbolPicker({
                     <button
                       onClick={() => removeSymbol(symbol.emoji)}
                       className="h-6 w-6 shrink-0 rounded-full border border-[var(--danger)]/50 bg-white text-[11px] font-bold text-[var(--danger)] hover:bg-[var(--danger)]/10 dark:bg-transparent"
-                      aria-label={`Remove ${symbol.emoji}`}
-                      title="Remove symbol"
+                      aria-label={t(`Remove ${symbol.emoji}`, `${symbol.emoji} 삭제`)}
+                      title={t("Remove symbol", "심볼 삭제")}
                     >
                       <X className="mx-auto h-3.5 w-3.5" />
                     </button>
@@ -404,14 +408,14 @@ function SymbolPicker({
                           className={`n-input w-full py-1 text-sm ${
                             limitShakeState[symbol.emoji] ? "n-input-shake" : ""
                           }`}
-                          placeholder="What does this mean?"
+                          placeholder={t("What does this mean?", "심볼 의미를 입력하세요")}
                           maxLength={labelCharacterLimit}
                         />
                         {(editingLabels[symbol.emoji]?.length ?? 0) >=
                           labelCharacterLimit && (
                           <p className="mt-1 text-xs text-[var(--danger)]" aria-live="polite">
                             {editingLabels[symbol.emoji]?.length === labelCharacterLimit
-                              ? "Character limit reached"
+                              ? t("Character limit reached", "글자 수 제한에 도달했습니다")
                               : null}
                           </p>
                         )}
@@ -422,13 +426,13 @@ function SymbolPicker({
                           startEditLabel(symbol.emoji, symbol.label)
                         }
                         className="n-btn-ghost min-w-0 flex-1 justify-start px-2 py-1 text-sm text-left"
-                      >
-                        {symbol.label || (
-                          <span className="text-[var(--muted)]">
-                            Tap to add label...
-                          </span>
-                        )}
-                      </button>
+                        >
+                          {symbol.label || (
+                            <span className="text-[var(--muted)]">
+                              {t("Tap to add label...", "터치해서 라벨 추가")}
+                            </span>
+                          )}
+                        </button>
                     )}
 
                   </div>
@@ -456,7 +460,7 @@ function SymbolPicker({
             }}
             className="rounded px-2 py-1 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger)]/10"
           >
-            Remove
+            {t("Remove", "삭제")}
           </button>
         </div>
       )}
@@ -467,7 +471,7 @@ function SymbolPicker({
         className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-xs text-[var(--muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink)] transition-colors"
       >
         <ChevronUp className="h-3.5 w-3.5" />
-        <span>Fold</span>
+        <span>{t("Fold", "접기")}</span>
       </button>
     </div>
   );

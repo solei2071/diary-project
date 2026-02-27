@@ -949,6 +949,7 @@ export default function Home() {
         onRequestAuth={() => setAuthMode("login")}
         symbolPlan={symbolPlan}
         planFeatures={planInfo.features}
+        appLanguage={appLanguage}
       />
       {/* 로그인/회원가입 모달 — authMode가 설정되어 있고 비로그인일 때만 표시 */}
       {authMode && !session && (
