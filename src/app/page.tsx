@@ -46,8 +46,12 @@ declare global {
   interface Window {
     webkit?: {
       messageHandlers?: {
+        appleProPurchase?: { postMessage: (payload?: unknown) => void };
+        applePurchase?: { postMessage: (payload?: unknown) => void };
         purchasePro?: { postMessage: (payload?: unknown) => void };
         proPurchase?: { postMessage: (payload?: unknown) => void };
+        startCheckout?: { postMessage: (payload?: unknown) => void };
+        startPurchase?: { postMessage: (payload?: unknown) => void };
       };
     };
   }
@@ -95,6 +99,13 @@ export default function Home() {
 
   const isPro = symbolPlan === "pro";
   const checkoutUrl = process.env.NEXT_PUBLIC_PRO_CHECKOUT_URL?.trim();
+  const accountProvider = session
+    ? String(
+        session.user.app_metadata?.provider ||
+          session.user.user_metadata?.provider ||
+          "email"
+      )
+    : "email";
 
   // 마운트 시 세션 로드 + 인증 상태 변경 구독
   useEffect(() => {
@@ -425,18 +436,65 @@ export default function Home() {
     }
 
     setPlanError("");
+    const purchasePayload = {
+      productId: "pro_unlock",
+      source: "web",
+      provider: accountProvider,
+      userId: session.user.id,
+      plan: "pro",
+      timestamp: new Date().toISOString()
+    };
+
+    const toCheckoutUrl = () => {
+      if (!checkoutUrl) return null;
+      try {
+        const url = new URL(checkoutUrl, window.location.href);
+        url.searchParams.set("product", "pro_unlock");
+        url.searchParams.set("provider", accountProvider);
+        url.searchParams.set("uid", session.user.id);
+        return url.toString();
+      } catch {
+        return checkoutUrl;
+      }
+    };
 
     if (typeof window !== "undefined") {
-      const iosBridge =
-        window.webkit?.messageHandlers?.purchasePro ??
-        window.webkit?.messageHandlers?.proPurchase;
-      if (iosBridge?.postMessage) {
-        iosBridge.postMessage({ productId: "pro_unlock" });
-        return;
-      }
+      const messageHandlers = window.webkit?.messageHandlers as Record<string, { postMessage: (payload?: unknown) => void }> | undefined;
+      const handlerNames = [
+        "purchasePro",
+        "proPurchase",
+        "appleProPurchase",
+        "applePurchase",
+        "startCheckout",
+        "startPurchase"
+      ];
 
-      if (checkoutUrl) {
-        window.location.assign(checkoutUrl);
+      let handledByBridge = false;
+      for (const name of handlerNames) {
+        const handler = messageHandlers?.[name];
+        if (!handler?.postMessage) {
+          continue;
+        }
+
+        const payloads = [purchasePayload, JSON.stringify(purchasePayload), "pro_unlock"];
+        for (const payload of payloads) {
+          try {
+            handler.postMessage(payload);
+            handledByBridge = true;
+            break;
+          } catch {
+            // continue with alternate payload shape
+          }
+        }
+        if (handledByBridge) {
+          break;
+        }
+      }
+      if (handledByBridge) return;
+
+      const checkoutLink = toCheckoutUrl();
+      if (checkoutLink) {
+        window.location.assign(checkoutLink);
         return;
       }
     }
@@ -482,13 +540,7 @@ export default function Home() {
     return isPro ? "Pro" : "Free";
   };
 
-  const canChangePassword = session
-    ? String(
-        session.user.app_metadata?.provider ||
-          session.user.user_metadata?.provider ||
-          "email"
-      ) === "email"
-    : false;
+  const canChangePassword = accountProvider === "email";
   const isAdmin = isAdminUser(session?.user ?? null);
   const t = (en: string, ko: string) => (appLanguage === "ko" ? ko : en);
 
