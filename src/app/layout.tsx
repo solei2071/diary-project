@@ -12,26 +12,31 @@ import PwaManager from "@/components/PwaManager";
 // 메타데이터: SEO, Open Graph, PWA 등에 사용 (서버에서 head에 주입됨)
 export const metadata: Metadata = {
   title: "Daily Flow Diary",
-  description: "Date-based to-do and activity diary",
+  description: "일별 할 일과 회고를 관리하는 다이어리 PWA",
   manifest: "/manifest.webmanifest", // PWA 매니페스트
   icons: {
     icon: [
-    { url: "/icon.svg", sizes: "192x192", type: "image/svg+xml" },
-    { url: "/icon.svg", sizes: "512x512", type: "image/svg+xml" }
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/icon.svg", sizes: "512x512", type: "image/svg+xml" }
     ],
-    apple: "/icon.svg",
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }
+    ],
     shortcut: "/icon.svg"
   },
   applicationName: "Daily Flow Diary",
+  keywords: ["다이어리", "to-do", "PWA", "iOS", "일정", "활동 기록"],
   appleWebApp: {
     capable: true, // iOS 웹앱으로 홈 화면에 추가 가능
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
     title: "Daily Flow Diary"
   },
   other: {
     "apple-mobile-web-app-capable": "yes",
     "mobile-web-app-capable": "yes",
     "apple-mobile-web-app-title": "Daily Diary",
+    "apple-touch-icon": "/apple-touch-icon.png",
     "format-detection": "telephone=no"
   }
 };
@@ -40,9 +45,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: "cover", // 노치/섬 유형 기기에서 전체 화면 사용
-  themeColor: "#2383e2"
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#111827" }
+  ]
 };
 
 /** 루트 레이아웃 — children에 page.tsx 등 하위 페이지가 렌더됨 */
@@ -50,7 +57,7 @@ export default function RootLayout({
   children
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="antialiased ios-safe-root">
         {/* notion-shell: globals.css에 정의된 Notion-style 최대 너비/패딩 래퍼 (최대 1100px) */}
         <div className="notion-shell">

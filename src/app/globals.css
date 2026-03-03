@@ -78,6 +78,7 @@
 
 html,
 body {
+  min-height: 100vh;
   min-height: 100dvh;
   height: 100%;
 }
@@ -130,6 +131,23 @@ body {
   select {
     font-size: 16px;
   }
+}
+
+/* 시간 입력 필드: 데스크톱 14px, 모바일(터치) 16px (iOS 자동 줌 방지) */
+.n-time-input {
+  font-size: 0.875rem;
+}
+
+@media (pointer: coarse) {
+  .n-time-input {
+    font-size: 16px;
+  }
+}
+
+/* iOS 셀렉트 기본 스타일 제거 */
+select {
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 @media (min-width: 768px) {
@@ -357,13 +375,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  font-size: 0.82rem;
-  border-radius: var(--radius-sm);
+  width: 2.5rem;
+  height: 2.5rem;
+  font-size: 0.88rem;
+  border-radius: 50%;
   color: var(--ink);
   cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease;
+  transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
 
 .n-calendar-day:hover {
@@ -373,6 +391,11 @@ body {
 .n-calendar-day--today {
   font-weight: 700;
   color: var(--primary);
+  background: rgba(35, 131, 226, 0.10);
+}
+
+.dark .n-calendar-day--today {
+  background: rgba(96, 165, 250, 0.14);
 }
 
 .n-calendar-day--selected {
@@ -381,9 +404,13 @@ body {
   font-weight: 600;
 }
 
+.dark .n-calendar-day--selected {
+  background: var(--ink);
+  color: var(--bg);
+}
+
 .n-calendar-day--selected:hover {
-  background: #1a1916;
-  color: #fff;
+  opacity: 0.88;
 }
 
 /* ─── Badge / Tag ───────────────────────────────────────── */

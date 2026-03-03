@@ -22,14 +22,15 @@ type SearchResult = {
 
 type Props = {
   session: Session | null;
+  appLanguage?: "en" | "ko";
   onClose: () => void;
   onSelectDate: (date: string) => void;
 };
 
 /** YYYY-MM-DD → 읽기 좋은 형식 */
-function prettyDate(value: string) {
+function prettyDate(value: string, locale: string = "en-US") {
   const date = new Date(`${value}T00:00:00`);
-  return date.toLocaleDateString("en-US", {
+  return date.toLocaleDateString(locale, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -53,25 +54,52 @@ function highlight(text: string, query: string): React.ReactNode {
   );
 }
 
-const TYPE_LABELS: Record<SearchResult["type"], string> = {
-  todo: "Task",
-  note: "Note",
-  activity: "Activity"
-};
-
 const TYPE_COLORS: Record<SearchResult["type"], string> = {
   todo: "bg-[var(--primary)]/12 text-[var(--primary)]",
   note: "bg-amber-100 text-amber-700",
   activity: "bg-[var(--success-bg)] text-[var(--success)]"
 };
 
-export default function SearchModal({ session, onClose, onSelectDate }: Props) {
+export default function SearchModal({
+  session,
+  appLanguage = "en",
+  onClose,
+  onSelectDate
+}: Props) {
+  const isKorean = appLanguage === "ko";
+  const t = (en: string, ko: string) => (isKorean ? ko : en);
+  const locale = isKorean ? "ko-KR" : "en-US";
+  const TYPE_LABELS: Record<SearchResult["type"], string> = {
+    todo: t("Task", "할 일"),
+    note: t("Note", "노트"),
+    activity: t("Activity", "활동")
+  };
+  const supabaseErrorMessage = t(
+    "Some search sources are unavailable. Results may be partial.",
+    "일부 검색 소스에 접근할 수 없어 결과가 누락될 수 있습니다."
+  );
+  const defaultErrorMessage = t("Search failed. Please retry.", "검색에 실패했습니다. 다시 시도해 주세요.");
+  const getSearchErrorMessage = (error: unknown) => {
+    if (error instanceof Error) {
+      const message = error.message.toLowerCase();
+      if (message.includes("network") || message.includes("connection")) {
+        return t("Network connection issue. Please try again.", "네트워크 연결에 문제가 있습니다. 다시 시도해 주세요.");
+      }
+      if (message.includes("not found") || message.includes("forbidden")) {
+        return t("Search is currently unavailable. Please try again later.", "지금은 검색을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.");
+      }
+    }
+    return defaultErrorMessage;
+  };
+
   const user = session?.user ?? null;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeSearchRef = useRef(0);
 
   // 모달 열릴 때 포커스
   useEffect(() => {
@@ -116,7 +144,7 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
             found.push({
               date,
               type: "note",
-              title: "Note",
+              title: t("Note", "노트"),
               excerpt: (start > 0 ? "…" : "") + content.slice(start, end) + (end < content.length ? "…" : "")
             });
           }
@@ -132,7 +160,7 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
               found.push({
                 date,
                 type: "activity",
-                title: `${item.emoji} ${item.label || "Activity"}`,
+                title: `${item.emoji} ${item.label || t("Activity", "활동")}`,
                 excerpt: item.label || item.emoji
               });
             }
@@ -144,13 +172,13 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
     }
 
     return found.sort((a, b) => b.date.localeCompare(a.date));
-  }, []);
+  }, [t]);
 
-  const searchSupabase = useCallback(async (q: string): Promise<SearchResult[]> => {
-    if (!user) return [];
+  const searchSupabase = useCallback(async (q: string): Promise<{ rows: SearchResult[]; hasPartialError: boolean }> => {
+    if (!user) return { rows: [], hasPartialError: false };
     const found: SearchResult[] = [];
 
-    const [todoRes, journalRes, activityRes] = await Promise.all([
+    const settled = await Promise.allSettled([
       supabase
         .from("todos")
         .select("title, due_date")
@@ -171,49 +199,83 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
         .limit(30)
     ]);
 
-    (todoRes.data ?? []).forEach((row) => {
-      found.push({ date: row.due_date, type: "todo", title: row.title, excerpt: row.title });
-    });
+    const [todoRes, journalRes, activityRes] = settled;
 
-    (journalRes.data ?? []).forEach((row) => {
-      const content = row.content ?? "";
-      const lower = q.toLowerCase();
-      const idx = content.toLowerCase().indexOf(lower);
-      const start = Math.max(0, idx - 30);
-      const end = Math.min(content.length, idx + 60);
-      found.push({
-        date: row.entry_date,
-        type: "note",
-        title: "Note",
-        excerpt: (start > 0 ? "…" : "") + content.slice(start, end) + (end < content.length ? "…" : "")
+    if (todoRes.status === "fulfilled" && !todoRes.value.error) {
+      (todoRes.value.data ?? []).forEach((row) => {
+        found.push({ date: row.due_date, type: "todo", title: t("Task", "할 일"), excerpt: row.title });
       });
-    });
+    }
 
-    (activityRes.data ?? []).forEach((row) => {
-      found.push({
-        date: row.activity_date,
-        type: "activity",
-        title: `${row.emoji ?? ""} ${row.label ?? "Activity"}`.trim(),
-        excerpt: row.label ?? row.emoji ?? ""
+    if (journalRes.status === "fulfilled" && !journalRes.value.error) {
+      (journalRes.value.data ?? []).forEach((row) => {
+        const content = row.content ?? "";
+        const lower = q.toLowerCase();
+        const idx = content.toLowerCase().indexOf(lower);
+        const start = Math.max(0, idx - 30);
+        const end = Math.min(content.length, idx + 60);
+        found.push({
+          date: row.entry_date,
+          type: "note",
+          title: t("Note", "노트"),
+          excerpt: (start > 0 ? "…" : "") + content.slice(start, end) + (end < content.length ? "…" : "")
+        });
       });
-    });
+    }
 
-    return found.sort((a, b) => b.date.localeCompare(a.date));
-  }, [user]);
+    if (activityRes.status === "fulfilled" && !activityRes.value.error) {
+      (activityRes.value.data ?? []).forEach((row) => {
+        found.push({
+          date: row.activity_date,
+          type: "activity",
+          title: `${row.emoji ?? ""} ${row.label ?? t("Activity", "활동")}`.trim(),
+          excerpt: row.label ?? row.emoji ?? ""
+        });
+      });
+    }
+
+    const hasError = settled.some(
+      (entry) => entry.status === "rejected" || (entry.status === "fulfilled" && !!entry.value.error)
+    );
+    return {
+      rows: found.sort((a, b) => b.date.localeCompare(a.date)),
+      hasPartialError: hasError
+    };
+  }, [user, t]);
 
   const runSearch = useCallback(async (q: string) => {
-    if (!q.trim() || q.trim().length < 2) {
+    const queryId = ++activeSearchRef.current;
+    const trimmedQuery = q.trim();
+
+    if (!trimmedQuery || trimmedQuery.length < 2) {
       setResults([]);
+      setErrorMessage("");
       setIsLoading(false);
       return;
     }
 
     setIsLoading(true);
+    setErrorMessage("");
     try {
-      const found = user ? await searchSupabase(q.trim()) : searchLocal(q.trim());
-      setResults(found);
+      if (user) {
+        const { rows, hasPartialError } = await searchSupabase(trimmedQuery);
+        if (queryId !== activeSearchRef.current) return;
+        setResults(rows);
+        if (hasPartialError) {
+          setErrorMessage(supabaseErrorMessage);
+        }
+      } else {
+        if (queryId !== activeSearchRef.current) return;
+        setResults(searchLocal(trimmedQuery));
+      }
+    } catch (error: unknown) {
+      if (queryId !== activeSearchRef.current) return;
+      setResults([]);
+      setErrorMessage(getSearchErrorMessage(error));
     } finally {
-      setIsLoading(false);
+      if (queryId === activeSearchRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [user, searchSupabase, searchLocal]);
 
@@ -222,6 +284,15 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => void runSearch(value), 300);
   };
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+      activeSearchRef.current += 1;
+    };
+  }, []);
 
   // 날짜별로 그룹화
   const grouped = results.reduce<Record<string, SearchResult[]>>((acc, item) => {
@@ -236,6 +307,8 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
       onClick={onClose}
     >
       <div
+        role="search"
+        aria-live="polite"
         className="fade-up w-full max-w-md overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -247,34 +320,38 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
             type="search"
             value={query}
             onChange={(e) => handleChange(e.target.value)}
-            placeholder="Search tasks, notes, activities…"
+            placeholder={t("Search tasks, notes, activities…", "할 일, 노트, 활동 검색…")}
             className="flex-1 bg-transparent text-sm text-[var(--ink)] placeholder:text-[var(--muted)] outline-none"
-            aria-label="Global search"
+            aria-label={t("Global search", "전체 검색")}
           />
           {query && (
             <button
               type="button"
               onClick={() => { setQuery(""); setResults([]); inputRef.current?.focus(); }}
               className="shrink-0 rounded p-0.5 text-[var(--muted)] hover:text-[var(--ink)]"
-              aria-label="Clear search"
+              aria-label={t("Clear search", "검색 지우기")}
             >
               <X className="h-3.5 w-3.5" />
             </button>
           )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded px-2 py-1 text-xs text-[var(--muted)] hover:text-[var(--ink)] border border-[var(--border)]"
-          >
-            ESC
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 rounded px-2 py-1 text-xs text-[var(--muted)] hover:text-[var(--ink)] border border-[var(--border)]"
+            >
+              {t("Close", "닫기")}
+            </button>
+          </div>
 
         {/* 결과 영역 */}
         <div className="max-h-[60vh] overflow-y-auto">
           {/* 로딩 */}
           {isLoading && (
-            <p className="px-4 py-6 text-center text-xs text-[var(--muted)]">Searching…</p>
+            <p className="px-4 py-6 text-center text-xs text-[var(--muted)]">{t("Searching…", "검색 중…")}</p>
+          )}
+
+          {errorMessage && !isLoading && (
+            <p className="px-4 py-6 text-center text-xs text-[var(--danger)]">{errorMessage}</p>
           )}
 
           {/* 빈 쿼리 */}
@@ -282,17 +359,19 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
             <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
               <Search className="h-6 w-6 text-[var(--muted)] opacity-30" />
               <p className="text-sm text-[var(--muted)]">
-                {user ? "Search across all your entries" : "Search your drafts for today"}
+                {user ? t("Search across all your entries", "모든 항목에서 검색") : t("Search your drafts for today", "오늘 작성한 임시저장에서 검색")}
               </p>
-              <p className="text-xs text-[var(--muted)] opacity-60">Type at least 2 characters</p>
+              <p className="text-xs text-[var(--muted)] opacity-60">{t("Type at least 2 characters", "검색어는 최소 2자 이상 입력해 주세요")}</p>
             </div>
           )}
 
           {/* 결과 없음 */}
           {!isLoading && query.length >= 2 && results.length === 0 && (
             <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-              <p className="text-sm font-medium text-[var(--muted)]">No results for &ldquo;{query}&rdquo;</p>
-              <p className="text-xs text-[var(--muted)] opacity-60">Try different keywords</p>
+              <p className="text-sm font-medium text-[var(--muted)]">
+                {t("No results for", "검색 결과가 없습니다:")} &ldquo;{query}&rdquo;
+              </p>
+              <p className="text-xs text-[var(--muted)] opacity-60">{t("Try different keywords", "다른 키워드로 다시 검색해 주세요")}</p>
             </div>
           )}
 
@@ -302,7 +381,7 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
               {/* 날짜 헤더 */}
               <div className="sticky top-0 flex items-center gap-1.5 bg-[var(--bg-secondary)] px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
                 <CalendarDays className="h-3 w-3" />
-                {prettyDate(date)}
+                {prettyDate(date, locale)}
               </div>
 
               {/* 해당 날짜 결과 */}
@@ -328,7 +407,7 @@ export default function SearchModal({ session, onClose, onSelectDate }: Props) {
         {/* 게스트 안내 */}
         {!user && (
           <div className="border-t border-[var(--border)] px-4 py-2.5">
-            <p className="text-[10px] text-[var(--muted)]">Sign in to search across all dates</p>
+            <p className="text-[10px] text-[var(--muted)]">{t("Sign in to search across all dates", "모든 날짜를 검색하려면 로그인해 주세요")}</p>
           </div>
         )}
       </div>

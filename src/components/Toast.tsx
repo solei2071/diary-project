@@ -8,7 +8,7 @@
 "use client";
 
 import { AlertTriangle, Check, Info, X } from "lucide-react";
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 type ToastType = "success" | "error" | "info" | "warning";
 
@@ -31,17 +31,34 @@ type ToastCtx = {
   show: (message: string, type?: ToastType, opts?: ShowOptions) => void;
 };
 
+type AppLanguage = "en" | "ko";
+
 const ToastContext = createContext<ToastCtx>({ show: () => {} });
 
 export function useToast() {
   return useContext(ToastContext);
 }
 
-export function ToastProvider({ children }: { children: React.ReactNode }) {
+export function ToastProvider({ children, appLanguage = "en" }: { children: React.ReactNode; appLanguage?: AppLanguage }) {
+  const isKorean = appLanguage === "ko";
+  const t = (en: string, ko: string) => (isKorean ? ko : en);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const timeoutMapRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const dismiss = useCallback((id: string) => {
+    const timer = timeoutMapRef.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timeoutMapRef.current.delete(id);
+    }
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      timeoutMapRef.current.forEach((timer) => clearTimeout(timer));
+      timeoutMapRef.current.clear();
+    };
   }, []);
 
   const show = useCallback(
@@ -49,10 +66,21 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       const id = `t-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       // 최대 3개까지만 쌓임
       setToasts((prev) => [...prev.slice(-2), { id, message, type, ...opts }]);
-      setTimeout(() => dismiss(id), opts?.duration ?? 2800);
+      const timeout = setTimeout(() => dismiss(id), opts?.duration ?? 2800);
+      timeoutMapRef.current.set(id, timeout);
     },
     [dismiss]
   );
+
+  useEffect(() => {
+    const visibleIds = new Set(toasts.map((toast) => toast.id));
+    timeoutMapRef.current.forEach((timer, id) => {
+      if (!visibleIds.has(id)) {
+        clearTimeout(timer);
+        timeoutMapRef.current.delete(id);
+      }
+    });
+  }, [toasts]);
 
   return (
     <ToastContext.Provider value={{ show }}>
@@ -65,9 +93,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           aria-atomic="false"
         >
           {toasts.map((toast) => (
-            <ToastBubble key={toast.id} toast={toast} onDismiss={dismiss} />
+            <ToastBubble key={toast.id} toast={toast} onDismiss={dismiss} isKorean={isKorean} />
           ))}
-        </div>
+    </div>
       )}
     </ToastContext.Provider>
   );
@@ -76,10 +104,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 function ToastBubble({
   toast,
   onDismiss,
+  isKorean,
 }: {
   toast: ToastItem;
   onDismiss: (id: string) => void;
+  isKorean: boolean;
 }) {
+  const t = (en: string, ko: string) => (isKorean ? ko : en);
   const colors: Record<ToastType, string> = {
     success:
       "bg-[var(--success-bg)] text-[var(--success)] border-[var(--success)]/30",
@@ -111,14 +142,14 @@ function ToastBubble({
           }}
           className="shrink-0 font-bold underline underline-offset-2 opacity-80 hover:opacity-100"
         >
-          {toast.undoLabel ?? "Undo"}
+          {toast.undoLabel ?? t("Undo", "실행 취소")}
         </button>
       )}
       <button
         type="button"
         onClick={() => onDismiss(toast.id)}
         className="shrink-0 opacity-40 hover:opacity-80 transition-opacity"
-        aria-label="Dismiss"
+        aria-label={t("Dismiss", "닫기")}
       >
         <X className="h-3 w-3" />
       </button>

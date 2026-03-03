@@ -10,13 +10,15 @@ type Props = {
   onEmailSent?: () => void;
   description?: string;
   onClose?: () => void;
+  appLanguage?: "en" | "ko";
 };
 
 const socialItems = [
   { key: "google",   label: "Google",   provider: "google",        icon: Chrome,   colorClass: "text-[#4285F4]" },
   { key: "apple",    label: "Apple",    provider: "apple",          icon: Apple,    colorClass: "text-[var(--ink)]" },
   { key: "linkedin", label: "LinkedIn", provider: "linkedin_oidc",  icon: Linkedin, colorClass: "text-[#0A66C2]" },
-];
+ ] as const;
+type SocialProvider = (typeof socialItems)[number]["provider"];
 
 export default function AuthPanel({
   compact = false,
@@ -24,7 +26,11 @@ export default function AuthPanel({
   onEmailSent,
   description,
   onClose,
+  appLanguage = "en",
 }: Props) {
+  const isKorean = appLanguage === "ko";
+  const t = (en: string, ko: string) => (isKorean ? ko : en);
+
   /* ── internal mode so the tab can switch without re-mounting ── */
   const [currentMode, setCurrentMode] = useState<"login" | "signup">(mode);
 
@@ -38,12 +44,12 @@ export default function AuthPanel({
   const [socialLoadingKey, setSocialLoadingKey] = useState<string | null>(null);
 
   const isSignup    = currentMode === "signup";
-  const submitLabel = isSignup ? "Send sign up link" : "Send sign in link";
+  const submitLabel = isSignup ? t("Send sign up link", "회원가입 링크 보내기") : t("Send sign in link", "로그인 링크 보내기");
   const helperCopy  =
     description ??
     (isSignup
-      ? "No password needed — we'll email you a secure sign-up link."
-      : "No password needed — we'll email you a secure sign-in link.");
+      ? t("No password needed — we'll email you a secure sign-up link.", "비밀번호가 필요 없습니다. 안전한 회원가입 링크를 이메일로 보냅니다.")
+      : t("No password needed — we'll email you a secure sign-in link.", "비밀번호가 필요 없습니다. 안전한 로그인 링크를 이메일로 보냅니다."));
 
   const switchMode = (m: "login" | "signup") => {
     setCurrentMode(m);
@@ -57,7 +63,7 @@ export default function AuthPanel({
     e.preventDefault();
     setError(""); setMessage("");
 
-    if (!email.trim()) { setError("Please enter your email."); return; }
+    if (!email.trim()) { setError(t("Please enter your email.", "이메일 주소를 입력해 주세요.")); return; }
 
     setIsLoading(true);
     const redirectTo = `${window.location.origin}/`;
@@ -67,12 +73,12 @@ export default function AuthPanel({
     });
 
     if (signInError) {
-      setError(signInError.message || "Failed to send link.");
+      setError(signInError.message || t("Failed to send link.", "링크 전송에 실패했습니다."));
     } else {
       setMessage(
         isSignup
-          ? "Sign-up link sent! Check your inbox."
-          : "Sign-in link sent! Check your inbox.",
+          ? t("Sign-up link sent! Check your inbox.", "회원가입 링크가 전송되었습니다. 메일함을 확인해 주세요.")
+          : t("Sign-in link sent! Check your inbox.", "로그인 링크가 전송되었습니다. 메일함을 확인해 주세요."),
       );
       onEmailSent?.();
     }
@@ -81,7 +87,7 @@ export default function AuthPanel({
 
   /* ── OAuth ── */
   const startSocialAuth = async (
-    provider: (typeof socialItems)[number]["provider"],
+    provider: SocialProvider,
     socialKey: string,
     label: string,
   ) => {
@@ -90,7 +96,7 @@ export default function AuthPanel({
 
     const redirectTo = `${window.location.origin}/`;
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider: provider as any,
+      provider,
       options: { redirectTo },
     });
 
@@ -98,7 +104,7 @@ export default function AuthPanel({
       setSocialLoadingKey(null);
       setError(
         oauthError.message ||
-          `${label} sign-in is not configured yet. Enable it in Supabase → Auth → Providers.`,
+          `${label} ${t("sign-in is not configured yet. Enable it in Supabase → Auth → Providers.", "가 아직 연결되지 않았습니다. Supabase → Auth → Providers에서 설정해 주세요.")}`,
       );
     }
   };
@@ -117,6 +123,7 @@ export default function AuthPanel({
           message={message}
           error={error}
           socialLoadingKey={socialLoadingKey}
+          t={t}
           submitLabel={submitLabel}
           helperCopy={helperCopy}
           sendMagicLink={sendMagicLink}
@@ -138,6 +145,7 @@ export default function AuthPanel({
       message={message}
       error={error}
       socialLoadingKey={socialLoadingKey}
+      t={t}
       submitLabel={submitLabel}
       helperCopy={helperCopy}
       sendMagicLink={sendMagicLink}
@@ -160,17 +168,18 @@ type CardProps = {
   message: string;
   error: string;
   socialLoadingKey: string | null;
+  t: (en: string, ko: string) => string;
   submitLabel: string;
   helperCopy: string;
   sendMagicLink: (e: FormEvent) => void;
-  startSocialAuth: (provider: string, key: string, label: string) => void;
+  startSocialAuth: (provider: SocialProvider, key: string, label: string) => void;
   onClose?: () => void;
 };
 
 function CompactCard({
   isSignup, currentMode, switchMode,
   email, setEmail, isLoading, message, error,
-  socialLoadingKey, submitLabel, helperCopy,
+  socialLoadingKey, t, submitLabel, helperCopy,
   sendMagicLink, startSocialAuth, onClose,
 }: CardProps) {
   return (
@@ -181,7 +190,7 @@ function CompactCard({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close"
+          aria-label={t("Close", "닫기")}
           className="absolute right-3.5 top-3.5 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/6 text-[var(--ink-light)] transition-colors hover:bg-black/12"
         >
           <X className="h-4 w-4" />
@@ -208,7 +217,7 @@ function CompactCard({
                   : "text-[var(--ink-light)] hover:text-[var(--ink)]"
               }`}
             >
-              {m === "login" ? "Sign in" : "Sign up"}
+              {m === "login" ? t("Sign in", "로그인") : t("Sign up", "회원가입")}
             </button>
           ))}
         </div>
@@ -234,7 +243,7 @@ function CompactCard({
                 ) : (
                   <Icon className={`h-[17px] w-[17px] flex-shrink-0 ${item.colorClass}`} />
                 )}
-                <span>Continue with {item.label}</span>
+                <span>{`${t("Continue with", "다음으로 계속:")} ${item.label}`}</span>
               </button>
             );
           })}
@@ -243,7 +252,7 @@ function CompactCard({
         {/* Divider */}
         <div className="my-4 flex items-center gap-3">
           <span className="h-px flex-1 bg-[var(--border)]" />
-          <span className="text-[11px] font-semibold tracking-widest text-[var(--muted)]">OR</span>
+          <span className="text-[11px] font-semibold tracking-widest text-[var(--muted)]">{t("OR", "또는")}</span>
           <span className="h-px flex-1 bg-[var(--border)]" />
         </div>
 
@@ -256,8 +265,8 @@ function CompactCard({
               onChange={(e) => setEmail(e.target.value)}
               type="email"
               autoComplete="email"
-              placeholder="Enter your email…"
-              aria-label="Email"
+              placeholder={t("Enter your email…", "이메일 주소를 입력해 주세요…")}
+              aria-label={t("Email", "이메일")}
               className="n-input h-11 w-full rounded-2xl border-[var(--border)] bg-[var(--bg-secondary)] text-sm"
               style={{ paddingLeft: "2.5rem", paddingRight: "1rem" }}
             />
@@ -271,7 +280,7 @@ function CompactCard({
             {isLoading ? (
               <>
                 <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                Sending…
+                {t("Sending…", "전송 중…")}
               </>
             ) : (
               <>

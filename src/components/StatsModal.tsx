@@ -31,6 +31,7 @@ type Props = {
   session: Session | null;
   /** 현재 선택 날짜 (기준 월 계산용) */
   selectedDate: string;
+  appLanguage?: "en" | "ko";
   onClose: () => void;
 };
 
@@ -77,6 +78,16 @@ function formatHours(hours: number) {
   return `${h}h ${m}m`;
 }
 
+const WEEKDAY_LABELS = {
+  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  ko: ["월", "화", "수", "목", "금", "토", "일"]
+};
+
+const formatDateForAxis = (value: string, isKorean = false) => {
+  const date = new Date(`${value}T00:00:00`);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+};
+
 /** 연속 스트릭 계산 (오늘 기준, 거꾸로) */
 function calcStreak(activeDates: Set<string>, today: string): number {
   let streak = 0;
@@ -90,9 +101,16 @@ function calcStreak(activeDates: Set<string>, today: string): number {
   return streak;
 }
 
-const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-export default function StatsModal({ session, selectedDate, onClose }: Props) {
+export default function StatsModal({
+  session,
+  selectedDate,
+  appLanguage = "en",
+  onClose
+}: Props) {
+  const isKorean = appLanguage === "ko";
+  const t = (en: string, ko: string) => (isKorean ? ko : en);
+  const weekdayLabels = isKorean ? WEEKDAY_LABELS.ko : WEEKDAY_LABELS.en;
+  const locale = isKorean ? "ko-KR" : "en-US";
   const user = session?.user ?? null;
   const [isLoading, setIsLoading] = useState(true);
   const [monthActivities, setMonthActivities] = useState<DailyActivity[]>([]);
@@ -106,33 +124,35 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
 
   const loadStats = useCallback(async () => {
     setIsLoading(true);
+    setMonthActivities([]);
+    setMonthTodos([]);
     try {
       if (!user) {
         // 게스트: localStorage에서 읽기
         const rawActivities = localStorage.getItem("diary-draft-activities");
         const rawTodos = localStorage.getItem("diary-draft-todos");
 
+        const inMonthActivities: DailyActivity[] = [];
         if (rawActivities) {
           const byDate = JSON.parse(rawActivities) as Record<string, DailyActivity[]>;
-          const inMonth: DailyActivity[] = [];
           Object.entries(byDate).forEach(([date, items]) => {
             if (date >= monthStart && date <= monthEnd) {
-              items.forEach((item) => inMonth.push({ ...item, activity_date: date }));
+              items.forEach((item) => inMonthActivities.push({ ...item, activity_date: date }));
             }
           });
-          setMonthActivities(inMonth);
         }
+        setMonthActivities(inMonthActivities);
 
+        const inMonthTodos: DailyTodo[] = [];
         if (rawTodos) {
           const byDate = JSON.parse(rawTodos) as Record<string, DailyTodo[]>;
-          const inMonth: DailyTodo[] = [];
           Object.entries(byDate).forEach(([date, items]) => {
             if (date >= monthStart && date <= monthEnd) {
-              items.forEach((item) => inMonth.push({ ...item, due_date: date }));
+              items.forEach((item) => inMonthTodos.push({ ...item, due_date: date }));
             }
           });
-          setMonthTodos(inMonth);
         }
+        setMonthTodos(inMonthTodos);
         return;
       }
 
@@ -217,7 +237,10 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
   const doneTodos = monthTodos.filter((t) => t.done).length;
   const completionRate = totalTodos > 0 ? Math.round((doneTodos / totalTodos) * 100) : null;
 
-  const monthLabel = refDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const monthLabel = refDate.toLocaleDateString(locale, { month: "long", year: "numeric" });
+  const weekLabel = weekDates.length
+    ? `${formatDateForAxis(weekDates[0], isKorean)} ~ ${formatDateForAxis(weekDates[weekDates.length - 1], isKorean)}`
+    : "";
 
   return (
     <div
@@ -232,14 +255,25 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
         {/* 헤더 */}
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold text-[var(--ink)]">Stats</h2>
-            <p className="text-xs text-[var(--muted)]">{monthLabel}</p>
+            <h2 className="text-base font-semibold text-[var(--ink)]">{t("Monthly Activity Summary", "월간 활동 요약")}</h2>
+            <p className="text-xs text-[var(--muted)]">
+              {t(
+                `${monthLabel} · Total hours spent, days with activity, current streak, and task completion ratio`,
+                `${monthLabel} · 활동 총합, 활동일수, 연속 기록, 할 일 완료율을 한눈에 확인`
+              )}
+            </p>
+            <p className="mt-1 text-[10px] text-[var(--muted)]">
+              {t(
+                "This report is calculated from all activity and task records in this month.",
+                "이 보고서는 이번 달의 활동/할 일 기록만을 기반으로 계산됩니다."
+              )}
+            </p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
-            aria-label="Close stats"
+            aria-label={t("Close stats", "통계 닫기")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -247,7 +281,7 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
 
         <div className="overflow-y-auto" style={{ maxHeight: "calc(90vh - 65px)" }}>
           {isLoading ? (
-            <p className="px-5 py-10 text-center text-xs text-[var(--muted)]">Loading stats…</p>
+              <p className="px-5 py-10 text-center text-xs text-[var(--muted)]">{t("Loading insights…", "인사이트 로딩 중…")}</p>
           ) : (
             <div className="divide-y divide-[var(--border)]">
 
@@ -257,19 +291,28 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
                 <div className="flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-3">
                   <span className="text-xl leading-none">⏱</span>
                   <p className="text-xl font-bold text-[var(--ink)]">{formatHours(totalMonthHours)}</p>
-                  <p className="text-[10px] text-[var(--muted)]">Total hours</p>
+                  <p className="text-[10px] text-[var(--muted)]">{t("Total active hours", "총 활동 시간")}</p>
+                  <p className="text-[9px] leading-4 text-[var(--muted)]">
+                    {t("This month, sum of all activity durations", "이번 달 전체 활동 시간의 합계")}
+                  </p>
                 </div>
                 {/* 활성 일수 */}
                 <div className="flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-3">
                   <Zap className="h-5 w-5 text-amber-500" />
                   <p className="text-xl font-bold text-[var(--ink)]">{activeDaysCount}</p>
-                  <p className="text-[10px] text-[var(--muted)]">Active days</p>
+                  <p className="text-[10px] text-[var(--muted)]">{t("Active days", "활동일")}</p>
+                  <p className="text-[9px] leading-4 text-[var(--muted)]">
+                    {t("Counted when at least one activity is logged", "해당 날짜에 활동 기록이 1개 이상 있어야 카운트")}
+                  </p>
                 </div>
                 {/* 스트릭 */}
                 <div className="flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-3">
                   <Flame className="h-5 w-5 text-orange-500" />
                   <p className="text-xl font-bold text-[var(--ink)]">{streak}</p>
-                  <p className="text-[10px] text-[var(--muted)]">Day streak</p>
+                  <p className="text-[10px] text-[var(--muted)]">{t("Active day streak", "연속 활동일")}</p>
+                  <p className="text-[9px] leading-4 text-[var(--muted)]">
+                    {t("Consecutive days with activity up to today", "오늘 기준으로 연속으로 기록된 활동일 수")}
+                  </p>
                 </div>
                 {/* 할 일 완료율 */}
                 <div className="flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-3">
@@ -277,13 +320,22 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
                   <p className="text-xl font-bold text-[var(--ink)]">
                     {completionRate !== null ? `${completionRate}%` : "—"}
                   </p>
-                  <p className="text-[10px] text-[var(--muted)]">Task done</p>
+                  <p className="text-[10px] text-[var(--muted)]">{t("Task completion", "할 일 완료")}</p>
+                  <p className="text-[9px] leading-4 text-[var(--muted)]">
+                    {t("Done / total tasks in this month", "이번 달 완료한 할일 수 / 전체 할일 수")}
+                  </p>
                 </div>
               </div>
 
               {/* ── 이번 주 바 차트 ── */}
               <div className="px-5 py-5">
-                <p className="mb-3 text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">This week</p>
+                <p className="mb-1 text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">{t("This week", "이번 주")}</p>
+                <p className="mb-3 text-[10px] text-[var(--muted)]">
+                  {t(
+                    `${weekLabel}: total time by day (selected date-based week)`,
+                    `${weekLabel}: 선택한 날짜 기준 주간 합계(일별)`
+                  )}
+                </p>
                 <div className="flex items-end gap-1.5" style={{ height: 80 }}>
                   {weekDates.map((date, i) => {
                     const hours = weekHours[date] ?? 0;
@@ -308,7 +360,7 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
                           }}
                         />
                         <span className={`text-[9px] font-medium ${isSelected ? "text-[var(--primary)]" : isToday ? "text-[var(--ink)]" : "text-[var(--muted)]"}`}>
-                          {WEEKDAY_LABELS[i]}
+                          {weekdayLabels[i]}
                         </span>
                       </div>
                     );
@@ -318,9 +370,16 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
 
               {/* ── 이번 달 상위 활동 ── */}
               <div className="px-5 py-5">
-                <p className="mb-3 text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">Top activities this month</p>
+                <p className="mb-3 text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">
+                  {t("Top activities this month", "이달의 상위 활동")}
+                </p>
+                <p className="mb-3 text-[10px] text-[var(--muted)]">
+                  {t("Ranked by total logged hours by emoji", "이모지별 누적 시간 기준 정렬")}
+                </p>
                 {topActivities.length === 0 ? (
-                  <p className="text-xs text-[var(--muted)]">No activities logged yet this month</p>
+                  <p className="text-xs text-[var(--muted)]">
+                    {t("No activities logged yet this month", "이번 달 활동 기록이 아직 없어요")}
+                  </p>
                 ) : (
                   <div className="space-y-2.5">
                     {topActivities.map(([emoji, { hours, label }]) => {
@@ -350,7 +409,15 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
               {/* ── 할 일 완료 현황 ── */}
               {totalTodos > 0 && (
                 <div className="px-5 py-5">
-                  <p className="mb-3 text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">Task completion</p>
+                  <p className="mb-1 text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">
+                    {t("Task completion", "할 일 완료")}
+                  </p>
+                  <p className="mb-3 text-[10px] text-[var(--muted)]">
+                    {t(
+                      "Task completion rate for the same month",
+                      "같은 달 기준 할일 완료율"
+                    )}
+                  </p>
                   <div className="flex items-center gap-3">
                     <div className="flex-1">
                       <div className="h-2.5 overflow-hidden rounded-full bg-[var(--border-strong)]">
@@ -365,7 +432,10 @@ export default function StatsModal({ session, selectedDate, onClose }: Props) {
                     </span>
                   </div>
                   <p className="mt-1.5 text-[10px] text-[var(--muted)]">
-                    {doneTodos} completed · {totalTodos - doneTodos} remaining this month
+                    {t(
+                      `${doneTodos} completed · ${totalTodos - doneTodos} remaining this month`,
+                      `${doneTodos}개 완료 · ${totalTodos - doneTodos}개 미완료`
+                    )}
                   </p>
                 </div>
               )}

@@ -7,6 +7,7 @@
  */
 
 const STORAGE_KEY = "diary-notification-settings";
+const DEFAULT_REMINDER_TIME = "20:00";
 
 export type NotificationSettings = {
   enabled: boolean;
@@ -16,7 +17,7 @@ export type NotificationSettings = {
 
 export const DEFAULT_SETTINGS: NotificationSettings = {
   enabled: false,
-  reminderTime: "",
+  reminderTime: DEFAULT_REMINDER_TIME,
   lastShownDate: null
 };
 
@@ -61,6 +62,18 @@ function todayString(): string {
   return `${y}-${m}-${day}`;
 }
 
+const parseReminderTime = (value: string): [number, number] => {
+  const fallback = DEFAULT_REMINDER_TIME.split(":").map((item) => Number.parseInt(item, 10));
+  const [fallbackHour, fallbackMinute] = fallback;
+  const [hourString, minuteString] = (value ?? "").trim().split(":");
+  const hour = Number.parseInt(hourString ?? "", 10);
+  const minute = Number.parseInt(minuteString ?? "", 10);
+
+  const normalizedHour = Number.isNaN(hour) ? fallbackHour : Math.max(0, Math.min(23, hour));
+  const normalizedMinute = Number.isNaN(minute) ? fallbackMinute : Math.max(0, Math.min(59, minute));
+  return [normalizedHour, normalizedMinute];
+};
+
 /** 리마인더 알림 표시 (이미 오늘 보냈으면 스킵) */
 export function showDailyReminder(settings: NotificationSettings): void {
   if (!settings.enabled) return;
@@ -89,12 +102,20 @@ export function showDailyReminder(settings: NotificationSettings): void {
 
 /** 리마인더 시간까지 남은 ms 계산 */
 export function msUntilReminderTime(reminderTime: string): number {
-  const [hourStr, minStr] = reminderTime.split(":");
-  const hour = Number.parseInt(hourStr ?? "20", 10);
-  const min = Number.parseInt(minStr ?? "0", 10);
+  const [hour, minute] = parseReminderTime(reminderTime);
 
   const now = new Date();
-  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, min, 0);
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0);
+
+  if (Number.isNaN(target.getTime())) {
+    const fallback = DEFAULT_REMINDER_TIME.split(":").map((item) => Number.parseInt(item, 10));
+    const fallbackHour = Number.isNaN(fallback[0]) ? 20 : fallback[0];
+    const fallbackMinute = Number.isNaN(fallback[1]) ? 0 : fallback[1];
+    return Math.max(
+      0,
+      new Date(now.getFullYear(), now.getMonth(), now.getDate(), fallbackHour, fallbackMinute, 0).getTime() - now.getTime()
+    );
+  }
 
   if (target.getTime() <= now.getTime()) {
     // 오늘 알림 시간이 이미 지났으면 내일로
