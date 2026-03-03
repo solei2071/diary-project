@@ -37,6 +37,7 @@ import {
 import { getPlanLimits, type UserSymbolPlan } from "@/lib/user-symbols";
 import {
   resolvePlanState,
+  clearStoredPlan,
   setStoredPlan,
   syncPlanWithMetadata,
   upsertProSubscription,
