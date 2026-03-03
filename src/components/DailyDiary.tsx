@@ -3084,9 +3084,9 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           {/* ── Dashboard (daily flow) ── */}
           {activeDiaryTab === "dashboard" ? (
           <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
-              <div className="flex flex-wrap items-center justify-between gap-1 px-2 py-2 border-b border-[var(--border)]">
+              <div className="flex flex-wrap items-center justify-between gap-1 px-1.5 py-1.5 border-b border-[var(--border)]">
                 <div className="flex min-w-0 items-center gap-1">
-                  <p className="n-label">{t("Dashboard", "대시보드")}</p>
+                  <p className="n-label text-xs">{t("Dashboard", "대시보드")}</p>
                   {monthLoading && <Loader2 className="h-3 w-3 animate-spin text-[var(--muted)]" />}
                 </div>
                 <div className="flex items-center gap-0.5 rounded-lg border border-[var(--border)] px-1 py-0.5">
@@ -3099,12 +3099,12 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           : shiftMonth(currentMonth, -1)
                       )
                     }
-                    className="n-btn-ghost h-6 w-6 p-0"
+                    className="n-btn-ghost h-5 w-5 p-0"
                     aria-label={dashboardViewMode === "week" ? t("Previous week", "이전 주") : t("Previous month", "이전 달")}
                   >
-                    <ChevronLeft className="h-3 w-3" />
+                    <ChevronLeft className="h-2.5 w-2.5" />
                   </button>
-                  <span className="min-w-0 max-w-[7.25rem] px-1 text-center text-[10px] leading-4 text-[var(--muted)]">
+                  <span className="min-w-0 max-w-[6.5rem] px-1 text-center text-[9px] leading-4 text-[var(--muted)]">
                     {dashboardViewMode === "week" ? weeklyRangeLabel : monthlyRangeLabel}
                   </span>
                   <button
@@ -3116,17 +3116,17 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           : shiftMonth(currentMonth, 1)
                       )
                     }
-                    className="n-btn-ghost h-6 w-6 p-0"
+                    className="n-btn-ghost h-5 w-5 p-0"
                     aria-label={dashboardViewMode === "week" ? t("Next week", "다음 주") : t("Next month", "다음 달")}
                   >
-                    <ChevronRight className="h-3 w-3" />
+                    <ChevronRight className="h-2.5 w-2.5" />
                   </button>
                 </div>
                 <div className="flex rounded-lg border border-[var(--border)] p-0.5">
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("week")}
-                    className={`px-2 py-1 text-center min-w-11 text-[11px] font-medium rounded-md transition-colors ${
+                    className={`px-1.5 py-0.5 text-center min-w-9 text-[10px] font-medium rounded-md transition-colors ${
                       dashboardViewMode === "week"
                         ? "bg-[var(--primary)] text-white"
                         : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
@@ -3137,7 +3137,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("month")}
-                    className={`px-2 py-1 text-center min-w-11 text-[11px] font-medium rounded-md transition-colors ${
+                    className={`px-1.5 py-0.5 text-center min-w-9 text-[10px] font-medium rounded-md transition-colors ${
                       dashboardViewMode === "month"
                         ? "bg-[var(--primary)] text-white"
                         : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
