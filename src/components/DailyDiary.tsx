@@ -3084,12 +3084,12 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           {/* ── Dashboard (daily flow) ── */}
           {activeDiaryTab === "dashboard" ? (
           <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
-              <div className="flex flex-wrap items-center justify-between gap-1 px-1.5 py-1.5 border-b border-[var(--border)]">
+              <div className="flex items-center justify-between gap-1 overflow-hidden px-1 py-1 border-b border-[var(--border)]">
                 <div className="flex min-w-0 items-center gap-1">
-                  <p className="n-label text-xs">{t("Dashboard", "대시보드")}</p>
+                  <p className="n-label truncate text-[10px]">{t("Dashboard", "대시보드")}</p>
                   {monthLoading && <Loader2 className="h-3 w-3 animate-spin text-[var(--muted)]" />}
                 </div>
-                <div className="flex items-center gap-0.5 rounded-lg border border-[var(--border)] px-1 py-0.5">
+                <div className="flex flex-shrink-0 items-center gap-0.5 rounded-lg border border-[var(--border)] px-0.5 py-0.5">
                   <button
                     type="button"
                     onClick={() =>
@@ -3104,7 +3104,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   >
                     <ChevronLeft className="h-2.5 w-2.5" />
                   </button>
-                  <span className="min-w-0 max-w-[6.5rem] px-1 text-center text-[9px] leading-4 text-[var(--muted)]">
+                  <span className="min-w-0 max-w-[6rem] shrink overflow-hidden truncate px-1 text-center text-[8px] leading-4 text-[var(--muted)]">
                     {dashboardViewMode === "week" ? weeklyRangeLabel : monthlyRangeLabel}
                   </span>
                   <button
@@ -3122,11 +3122,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     <ChevronRight className="h-2.5 w-2.5" />
                   </button>
                 </div>
-                <div className="flex rounded-lg border border-[var(--border)] p-0.5">
+                <div className="flex flex-shrink-0 rounded-lg border border-[var(--border)] p-0.5">
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("week")}
-                    className={`px-1.5 py-0.5 text-center min-w-9 text-[10px] font-medium rounded-md transition-colors ${
+                    className={`px-1 py-0.5 text-center min-w-[1.75rem] text-[8px] font-medium rounded-md leading-4 transition-colors ${
                       dashboardViewMode === "week"
                         ? "bg-[var(--primary)] text-white"
                         : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
@@ -3137,7 +3137,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("month")}
-                    className={`px-1.5 py-0.5 text-center min-w-9 text-[10px] font-medium rounded-md transition-colors ${
+                    className={`px-1 py-0.5 text-center min-w-[1.75rem] text-[8px] font-medium rounded-md leading-4 transition-colors ${
                       dashboardViewMode === "month"
                         ? "bg-[var(--primary)] text-white"
                         : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
