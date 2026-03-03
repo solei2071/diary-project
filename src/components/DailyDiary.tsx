@@ -2408,7 +2408,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
       <div className="flex flex-1 flex-col gap-8 pt-4 lg:flex-row lg:items-start">
 
         {/* ── Left Sidebar: Calendar + Monthly Flow ── */}
-        <aside className="w-full shrink-0 lg:sticky lg:top-6 lg:w-60">
+        {activeDiaryTab !== "dashboard" ? (
+          <aside className="w-full shrink-0 lg:sticky lg:top-6 lg:w-60">
           {/* Activity summary (read-only) */}
           <div className="fade-up rounded-lg border border-[var(--border)] p-3">
             <p className="mb-1 text-xs leading-5 font-medium text-[var(--ink)]">{t("Today's activity summary", "오늘의 활동 요약")}</p>
@@ -2517,7 +2518,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
             ) : null}
           </div>
 
-        </aside>
+          </aside>
+        ) : null}
 
           {/* ── Right Main Content ── */}
         <div
