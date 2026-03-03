@@ -3155,7 +3155,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       value={dashboardQuery}
                       onChange={(e) => setDashboardQuery(e.target.value)}
                       className="n-input w-full pl-8"
-                      placeholder={t("Search emoji or label", "요약에서 이모지 또는 라벨 검색")}
+                      placeholder=""
                       aria-label={t("Search summary", "요약 검색")}
                     />
                   </div>
@@ -3165,26 +3165,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               <div className="px-3 pb-3 max-h-[640px] overflow-y-auto">
                 {hasAdvancedSummary ? (
                   <>
-                    <div className="mb-3 grid gap-2 rounded-lg border border-[var(--border)] p-2 sm:grid-cols-4">
-                      <div className="rounded-md border border-[var(--border)] p-2">
-                        <p className="text-xs text-[var(--muted)]">{t("Total hours", "총 활동 시간")}</p>
-                        <p className="text-base font-semibold text-[var(--ink)]">{formatHoursLabel(dashboardTotalHours)}</p>
-                      </div>
-                      <div className="rounded-md border border-[var(--border)] p-2">
-                        <p className="text-xs text-[var(--muted)]">{t("Active days", "활동한 날 수")}</p>
-                        <p className="text-base font-semibold text-[var(--ink)]">
-                          {dashboardActiveDays} / {displayedDays.length}
-                        </p>
-                      </div>
-                      <div className="rounded-md border border-[var(--border)] p-2">
-                        <p className="text-xs text-[var(--muted)]">{t("Longest streak", "최장 연속 기록")}</p>
-                        <p className="text-base font-semibold text-[var(--ink)]">{dashboardLongestStreak}</p>
-                      </div>
-                      <div className="rounded-md border border-[var(--border)] p-2">
-                        <p className="text-xs text-[var(--muted)]">{t("Rest day ratio", "휴식일 비율")}</p>
-                        <p className="text-base font-semibold text-[var(--ink)]">{dashboardRestDayRatio}%</p>
-                      </div>
-                    </div>
                     {topThreeActivities.length > 0 ? (
                       <div className="mb-3 rounded-lg border border-[var(--border)] p-2">
                         <p className="mb-2 text-xs text-[var(--muted)]">{t("Top 3 activities", "상위 3개 활동")}</p>
