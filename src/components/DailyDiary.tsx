@@ -2824,7 +2824,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <div className="flex gap-2">
                           <input
                             value={customEmoji}
-                            onChange={(e) => setCustomEmoji(e.target.value.slice(0, 4))}
+                            onChange={(e) => setCustomEmoji(e.target.value.slice(0, 12))}
                             className="n-input w-20 shrink-0"
                             placeholder={t("Emoji", "이모지")}
                             aria-label={t("Emoji input", "이모지 입력")}

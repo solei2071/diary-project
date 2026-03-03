@@ -15,7 +15,7 @@ import {
   type DragEvent,
   type MouseEvent,
 } from "react";
-import { Search, X, GripVertical, ChevronUp } from "lucide-react";
+import { Search, X, GripVertical, ChevronUp, Plus } from "lucide-react";
 import { emojiCategories, searchEmojis } from "@/lib/emoji-data";
 import type { UserSymbol } from "@/lib/user-symbols";
 import { getMaxUserSymbols } from "@/lib/user-symbols";
@@ -41,6 +41,7 @@ function SymbolPicker({
   const t = (en: string, ko: string) => (isKorean ? ko : en);
   const [activeCategory, setActiveCategory] = useState(emojiCategories[0].name);
   const [searchQuery, setSearchQuery] = useState("");
+  const [quickEmojiInput, setQuickEmojiInput] = useState("");
   const [editingLabels, setEditingLabels] = useState<Record<string, string>>({});
   const [limitShakeState, setLimitShakeState] = useState<Record<string, boolean>>({});
   const searchRef = useRef<HTMLInputElement>(null);
@@ -73,6 +74,61 @@ function SymbolPicker({
     const cat = emojiCategories.find((c) => c.name === activeCategory);
     return cat ? cat.emojis : [];
   }, [searchQuery, activeCategory]);
+
+  const normalizeQuickEmojiInput = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const segmenter = typeof Intl !== "undefined" && "Segmenter" in Intl
+      ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+      : null;
+    if (!segmenter) {
+      return [...trimmed][0] ?? "";
+    }
+    return [...segmenter.segment(trimmed)].map((segment) => segment.segment)[0] ?? "";
+  };
+
+  const isLikelyEmoji = (value: string) => {
+    try {
+      return /\p{Extended_Pictographic}/u.test(value);
+    } catch {
+      return value.length > 1;
+    }
+  };
+
+  const addQuickSymbol = () => {
+    const next = normalizeQuickEmojiInput(quickEmojiInput);
+    if (!next) {
+      setLimitReachedMessage(t("Please enter an emoji.", "이모지를 입력해 주세요."));
+      return;
+    }
+
+    if (!isLikelyEmoji(next)) {
+      setLimitReachedMessage(t("Please enter an emoji character.", "이모지 문자를 입력해 주세요."));
+      return;
+    }
+
+    if (selectedSet.has(next)) {
+      setLimitReachedMessage(t(`The symbol ${next} is already added`, `${next}은(는) 이미 추가됐습니다`));
+      setQuickEmojiInput("");
+      return;
+    }
+
+    if (isLimitReached) {
+      setLimitReachedMessage(t(`Maximum ${maxSymbols} symbols reached`, `기호는 최대 ${maxSymbols}개까지 선택할 수 있어요`));
+      return;
+    }
+
+    onSymbolsChange([
+      ...currentSymbols,
+      {
+        emoji: next,
+        label: "",
+        order: currentSymbols.length
+      },
+    ]);
+    setQuickEmojiInput("");
+    setLimitReachedMessage("");
+  };
 
   /** 이모지 토글 (추가/제거) */
   const toggleEmoji = (emoji: string) => {
@@ -281,6 +337,32 @@ function SymbolPicker({
             <X className="h-3.5 w-3.5" />
           </button>
         )}
+      </div>
+
+      <div className="mb-3 flex gap-2">
+        <input
+          value={quickEmojiInput}
+          onChange={(e) => setQuickEmojiInput(e.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addQuickSymbol();
+            }
+          }}
+          className="n-input w-full"
+          placeholder={t("Paste or type any emoji", "이모지를 붙여넣기/입력해서 바로 추가")}
+          aria-label={t("Add emoji directly", "이모지 직접 추가")}
+          inputMode="text"
+        />
+        <button
+          onClick={addQuickSymbol}
+          className="inline-flex items-center gap-1 rounded border border-[var(--primary)] bg-[var(--primary)]/12 px-3 py-1.5 text-xs font-semibold text-[var(--primary)]"
+          aria-label={t("Add", "추가")}
+          type="button"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span>{t("Add", "추가")}</span>
+        </button>
       </div>
 
       {/* ── Category Tabs ── */}
