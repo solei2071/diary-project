@@ -1,9 +1,10 @@
 /**
  * subscription.ts — in-app plan state helpers
  *
- * 서버 기준 구독 상태를 우선으로 판정하되, fallback 로컬/metadata를 결합합니다.
- * 향후 실제 결제 연동(영수증 검증 등) 시, 서버의 user_subscriptions 레코드만 교체해도
- * 클라이언트 판정이 일관되게 동작하도록 구성했습니다.
+ * 핵심 원칙:
+ * 1) 로그인 사용자는 서버 구독 데이터(user_subscriptions)로만 플랜을 신뢰한다.
+ * 2) 서버 데이터가 없거나 검증 실패 시 안전하게 free로 강등한다.
+ * 3) 엔트리먼트는 부가 기능 플래그로 해석하고, 권한 상승의 최종 근거는 아니다.
  */
 
 import type { Session } from "@supabase/supabase-js";
@@ -52,6 +53,9 @@ const resolvePlanFromStorage = (userId?: string | null): PlanInfo => {
   }
 
   const raw = localStorage.getItem(getPlanStorageKey(userId));
+  // 학습 포인트:
+  // localStorage는 브라우저 사용자가 조작 가능한 저장소라서,
+  // 보안 판단의 주축이 아니라 UI 표기/오프라인 fallback 용도로만 사용한다.
   return {
     plan: normalizePlanValue(raw),
     source: "local",
@@ -332,15 +336,12 @@ export const resolvePlanFromSubscription = async (user: Session["user"] | null):
 };
 
 export const resolvePlan = (user: Session["user"] | null): UserSymbolPlan => {
-  const fromMeta = resolvePlanFromMetadata(user);
-  if (fromMeta.source === "metadata" && fromMeta.plan === "pro") {
-    return "pro";
+  if (!user) {
+    return resolvePlanFromStorage().plan;
   }
-  if (user) {
-    return fromMeta.plan;
-  }
-
-  return resolvePlanFromStorage().plan;
+  // 학습 포인트:
+  // 로그인 유저는 기본값을 free로 시작해, 구독 동기화 전에 오동작/권한 과대 판정을 방지한다.
+  return "free";
 };
 
 export const resolvePlanInfo = async (user: Session["user"] | null): Promise<PlanInfo> => {
@@ -361,13 +362,24 @@ export const resolvePlanInfo = async (user: Session["user"] | null): Promise<Pla
     };
   }
 
-  const fromMetadata = resolvePlanFromMetadata(user);
-  setStoredPlan(fromMetadata.plan, user.id);
-  return fromMetadata;
+  // 학습 포인트:
+  // 구독 데이터가 없거나 조회 실패한 경우 free로 강등한다.
+  // 이로 인해 플래그 조작/임시저장소 오염이 곧바로 Pro로 이어지는 위험을 줄인다.
+  const fallbackPlan = {
+    plan: "free" as const,
+    source: "local" as const,
+    isTrial: false,
+    gracePeriod: false,
+    expiresAt: null
+  };
+  setStoredPlan("free", user.id);
+  return fallbackPlan;
 };
 
 export const resolvePlanState = async (user: Session["user"] | null): Promise<PlanState> => {
   const info = await resolvePlanInfo(user);
+  // 학습 포인트:
+  // 엔트리먼트는 기능 확장 정보이지만, plan 권한과 항상 함께 판단해야 한다.
   const entitlements = user ? await resolveEntitlements(user.id) : [];
   return {
     ...info,
@@ -377,6 +389,8 @@ export const resolvePlanState = async (user: Session["user"] | null): Promise<Pl
 
 export const syncPlanWithMetadata = async (user: Session["user"] | null, plan: UserSymbolPlan) => {
   if (!user) return;
+  // 학습 포인트:
+  // 사용자 메타데이터 동기화는 보조정보일 뿐, 최종 판정 기준은 구독 레코드이다.
   await supabase.auth.updateUser({
     data: {
       plan,
@@ -390,6 +404,9 @@ export const syncPlanWithMetadata = async (user: Session["user"] | null, plan: U
 export const upsertProSubscription = async (user: Session["user"] | null) => {
   if (!user) return;
 
+  // 학습 포인트:
+  // 현재는 클라이언트 업서트로 동작하지만, 보안상으로는 영수증 검증 webhook에서
+  // 이 함수가 호출되는 구조(서버 단일 진입점)로 전환하는 것이 바람직하다.
   const now = new Date().toISOString();
   await supabase.from("user_subscriptions").upsert(
     {

@@ -1707,6 +1707,10 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
 
 /** 할 일 체크/해제 토글 (Optimistic UI: 즉시 반영 후 에러 시 롤백) */
   const toggleTodo = async (todo: UiTodo) => {
+    // 학습 포인트:
+    // 1) UI는 즉시 변경(낙관적 업데이트)하고,
+    // 2) 서버 저장 실패 시 이전 상태로 복구한다.
+    // 3) 인증 사용자에서는 id/user_id 둘 다 조건으로 업데이트해 소유권 위조를 방어한다.
     const optimistic = todos.map((item) => (item.id === todo.id ? { ...item, done: !item.done } : item));
     setTodos(sortTodosForDisplay(optimistic));
     setTodoError("");
@@ -1725,7 +1729,8 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     const { error } = await supabase
       .from("todos")
       .update({ done: !todo.done })
-      .eq("id", todo.id);
+      .eq("id", todo.id)
+      .eq("user_id", user.id);
 
     if (error) {
       if (!shouldIgnoreSupabaseSchemaError(error.message)) {
@@ -1738,8 +1743,11 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setIsTodoDirty(false);
   };
 
-  /** 할 일 삭제 (Optimistic UI + Undo 지원) */
+/** 할 일 삭제 (Optimistic UI + Undo 지원) */
   const deleteTodo = async (todo: UiTodo) => {
+    // 학습 포인트:
+    // 삭제도 낙관적 업데이트 + Undo(복구)을 붙였지만,
+    // 실제 delete 쿼리는 id 만으로 제거하지 않고 user_id를 같이 검사한다.
     const prev = [...todos];
     const updated = todos.filter((t) => t.id !== todo.id);
     setTodos(updated);
@@ -1763,7 +1771,12 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     });
 
     if (user) {
-      const { error } = await supabase.from("todos").delete().eq("id", todo.id);
+      const { error } = await supabase
+        .from("todos")
+        .delete()
+        .eq("id", todo.id)
+        // [보안] 현재 로그인 사용자(user.id) 소유 데이터만 삭제되도록 추가 제한
+        .eq("user_id", user.id);
       if (error) {
         if (!shouldIgnoreSupabaseSchemaError(error.message)) {
           setTodos(sortTodosForDisplay(prev));

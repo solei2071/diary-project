@@ -28,11 +28,12 @@ export const hasEmailAdminFallback = (user: User | null, adminEmails: string[]) 
 };
 
 const hasRoleAdmin = (user: User | null): boolean => {
-  const metadata = user?.user_metadata ?? {};
   const appMetadata = user?.app_metadata ?? {};
-  const roleFromMetadata = normalizeRole((metadata as { role?: unknown }).role);
+  // 학습 포인트:
+  // 앱 메타데이터의 role은 서버가 발급한 신뢰 가능한 클레임이어야 함.
+  // 사용자 입력 가능한 user_metadata는 클라이언트 조작 가능성이 있어 관리자 판별에서 제외한다.
   const roleFromAppMetadata = normalizeRole((appMetadata as { role?: unknown }).role);
-  return roleFromMetadata === "admin" || roleFromAppMetadata === "admin";
+  return roleFromAppMetadata === "admin";
 };
 
 export const isAdminUser = (user: User | null): boolean => {
@@ -45,4 +46,3 @@ export const getAdminDisplayName = (user: User | null) => {
   if (!user) return "Admin";
   return user.user_metadata?.name || user.user_metadata?.full_name || user.email || "Admin";
 };
-

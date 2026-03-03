@@ -81,6 +81,80 @@ const LOCAL_DATA_STORAGE_KEYS = [
 const LOCAL_DATA_STORAGE_PREFIXES = ["diary-symbol-plan-"] as const;
 const ACCOUNT_DELETE_ENDPOINT = process.env.NEXT_PUBLIC_ACCOUNT_DELETE_ENDPOINT?.trim();
 const PRIVACY_CONTACT_EMAIL = process.env.NEXT_PUBLIC_PRIVACY_CONTACT_EMAIL?.trim();
+const PURCHASE_PENDING_STATE_KEY = "diary-purchase-pending";
+const PURCHASE_PENDING_TTL_MS = 10 * 60 * 1000;
+
+type PurchasePendingState = {
+  token: string;
+  userId: string;
+  provider: string;
+  source: "web" | "native";
+  createdAt: number;
+  expiresAt: number;
+};
+
+const createPurchaseToken = () => {
+  // 학습 포인트:
+  // 구매 플로우에서 URL만으로 인증하는 구조는 매우 위험하므로
+  // 브라우저에서 임시 토큰을 생성해 checkout 시작 시점과 성공 콜백을 바인딩한다.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `pending_${crypto.randomUUID()}`;
+  }
+  return `pending_${Date.now().toString(36)}_${Math.floor(Math.random() * 1000000).toString(36)}`;
+};
+
+const readPurchaseState = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    // localStorage의 pending state는 신뢰근거가 아닌, "검증 전 단계의 힌트"로만 취급한다.
+    const raw = localStorage.getItem(PURCHASE_PENDING_STATE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PurchasePendingState;
+  } catch {
+    return null;
+  }
+};
+
+const clearPurchaseState = () => {
+  if (typeof window === "undefined") return;
+  try {
+    // 학습 포인트: 처리 완료/실패/로그아웃 모두에서 토큰을 정리해야 재사용 공격을 줄일 수 있다.
+    localStorage.removeItem(PURCHASE_PENDING_STATE_KEY);
+  } catch {
+    // no-op
+  }
+};
+
+const consumePurchaseState = (userId?: string | null, token?: string | null, provider?: string | null) => {
+  const state = readPurchaseState();
+  if (!state || !userId) {
+    return false;
+  }
+  const now = Date.now();
+  // 핵심 방어:
+  // 1) 사용자 일치 2) TTL 만료 3) 토큰 일치 4) provider 일치 검사
+  // 위 조건을 모두 통과해야 결제 완료 처리한다.
+  if (
+    state.userId !== userId ||
+    state.expiresAt <= now ||
+    (token && state.token !== token) ||
+    (provider && state.provider && state.provider !== provider)
+  ) {
+    clearPurchaseState();
+    return false;
+  }
+  clearPurchaseState();
+  return true;
+};
+
+const setPurchaseState = (state: PurchasePendingState) => {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(PURCHASE_PENDING_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // no-op
+  }
+};
 
 const clearLocalDiaryData = (userId?: string | null) => {
   if (typeof window === "undefined") return;
@@ -259,7 +333,11 @@ export default function Home() {
   };
   const signOut = async () => {
     const userId = session?.user?.id ?? null;
+    // 학습 포인트:
+    // 로그아웃은 인증만 종료하는 행위가 아니라,
+    // 로컬 저장 데이터와 결제 pending state를 함께 정리해 후속 공격면을 줄인다.
     await supabase.auth.signOut();
+    clearPurchaseState();
     clearLocalDiaryData(userId);
     emitLocalDataCleared();
     closeSettings();
@@ -670,8 +748,21 @@ export default function Home() {
     document.documentElement.lang = language;
   };
 
-  const grantProAfterPurchase = useCallback(async () => {
-    if (isPro) return;
+  const grantProAfterPurchase = useCallback(async (purchaseToken?: string | null) => {
+    if (isPro) {
+      // 이미 Pro면 중복 호출이 와도 서버 부하를 줄이기 위해 바로 종료한다.
+      clearPurchaseState();
+      return true;
+    }
+    if (!session?.user) {
+      setPlanError(t("Please sign in first to complete unlock.", "구매 완료 처리를 하려면 로그인하세요."));
+      return false;
+    }
+    if (!consumePurchaseState(session.user.id, purchaseToken, accountProvider)) {
+      setPlanError(t("Unable to verify purchase. Please retry from Checkout.", "구매가 검증되지 않았습니다. 결제 화면에서 다시 진행해 주세요."));
+      return false;
+    }
+
     const nextPlan: UserSymbolPlan = "pro";
     setSymbolPlan(nextPlan);
     setStoredPlan(nextPlan, session?.user?.id);
@@ -686,12 +777,10 @@ export default function Home() {
     }));
     setPlanError("");
 
-    if (!session?.user) {
-      return;
-    }
     try {
       await syncPlanWithMetadata(session.user, "pro");
       await upsertProSubscription(session.user);
+      // 결제 직후 DB 조회는 최종 상태를 다시 가져와 화면과 캐시를 최신화한다.
       const info = await resolvePlanState(session.user);
       setSymbolPlan(info.plan);
       setPlanInfo(info);
@@ -699,8 +788,10 @@ export default function Home() {
         await loadAccountSubscription();
       }
       setPlanError("");
+      return true;
     } catch {
       setPlanError(t("Plan saved on this device. Server sync for account failed.", "현재 기기엔 반영되었지만 계정 동기화에 실패했습니다."));
+      return false;
     }
   }, [isPro, session, settingsPanel, loadAccountSubscription]);
 
@@ -714,12 +805,23 @@ export default function Home() {
     }
 
     setPlanError("");
+    const purchaseToken = createPurchaseToken();
+    setPurchaseState({
+      token: purchaseToken,
+      userId: session.user.id,
+      provider: accountProvider,
+      source: "web",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + PURCHASE_PENDING_TTL_MS
+    });
+
     const purchasePayload = {
       productId: "pro_unlock",
       source: "web",
       provider: accountProvider,
       userId: session.user.id,
       plan: "pro",
+      purchaseToken,
       timestamp: new Date().toISOString()
     };
 
@@ -730,12 +832,16 @@ export default function Home() {
         url.searchParams.set("product", "pro_unlock");
         url.searchParams.set("provider", accountProvider);
         url.searchParams.set("uid", session.user.id);
+        url.searchParams.set("purchase_token", purchaseToken);
         return url.toString();
       } catch {
         return checkoutUrl;
       }
     };
 
+    // 학습 포인트:
+    // iOS 네이티브 브리지 성공 여부에 따라 분기한다.
+    // 브리지가 없으면 web checkout URL로 폴백한다.
     if (typeof window !== "undefined") {
       const messageHandlers = window.webkit?.messageHandlers as Record<string, { postMessage: (payload?: unknown) => void }> | undefined;
       const handlerNames = [
@@ -788,17 +894,44 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const completePurchase = () => {
-      void grantProAfterPurchase();
+    const completePurchase = (event?: Event) => {
+      // 앱 내 브릿지 이벤트로 전달되는 임의 payload에서도
+      // 구매 토큰만 추출해 grantProAfterPurchase로 전달한다.
+      const detail = event as Event & { detail?: unknown };
+      const incomingToken =
+        detail && typeof detail === "object" && detail.detail && typeof detail.detail === "object"
+          ? (detail.detail as { purchaseToken?: unknown }).purchaseToken
+          : null;
+
+      const altToken =
+        detail && typeof detail === "object" && detail.detail && typeof detail.detail === "object"
+          ? (detail.detail as { token?: unknown }).token
+          : null;
+
+      const nextToken =
+        typeof incomingToken === "string" && incomingToken.length > 0
+          ? incomingToken
+          : typeof altToken === "string" && altToken.length > 0
+            ? altToken
+            : null;
+
+      void grantProAfterPurchase(nextToken);
     };
 
     const search = new URLSearchParams(window.location.search);
     if (search.get("purchase") === "success") {
-      void grantProAfterPurchase();
-      search.delete("purchase");
-      const qs = search.toString();
-      const nextUrl = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
-      window.history.replaceState({}, "", nextUrl);
+      // 학습 포인트:
+      // 서버 리다이렉트로 URL이 뒤섞여도, 유효한 토큰일 때만 상태를 처리하고
+      // 성공 처리 뒤에만 쿼리를 제거해 재방문 시 중복 처리 위험을 줄인다.
+      const purchaseToken = search.get("purchase_token");
+      void grantProAfterPurchase(purchaseToken).then((granted) => {
+        if (!granted) return;
+        search.delete("purchase");
+        search.delete("purchase_token");
+        const qs = search.toString();
+        const nextUrl = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
+        window.history.replaceState({}, "", nextUrl);
+      });
     }
 
     window.addEventListener("diary:pro-purchase-success", completePurchase);
