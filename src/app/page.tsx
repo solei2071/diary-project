@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import AuthPanel from "@/components/AuthPanel";
 import DailyDiary from "@/components/DailyDiary";
@@ -24,9 +24,16 @@ import { supabase } from "@/lib/supabase";
 import {
   CheckCircle2,
   CreditCard,
+  Download,
   Copy,
+  Fingerprint,
+  Globe,
   KeyRound,
+  Lock,
   Moon,
+  Palette,
+  Printer,
+  ShieldAlert,
   ShieldCheck,
   RefreshCw,
   Settings,
@@ -44,6 +51,19 @@ import {
   type PlanState
 } from "@/lib/subscription";
 import { isAdminUser } from "@/lib/admin";
+import {
+  authenticateWithBiometric,
+  createPasscodeRecord,
+  DEFAULT_APP_LOCK_CONFIG,
+  isBiometricAvailable,
+  loadAppLockConfig,
+  registerBiometricCredential,
+  resetAppLockConfig,
+  saveAppLockConfig,
+  shouldRequireAppUnlock,
+  verifyPasscode,
+  type AppLockConfig
+} from "@/lib/app-lock";
 
 declare global {
   interface Window {
@@ -61,6 +81,7 @@ declare global {
 }
 
 type AppLanguage = "en" | "ko";
+type FontStyle = "default" | "clean" | "rounded";
 
 const LOCAL_DATA_STORAGE_KEYS = [
   "diary-draft-todos",
@@ -68,13 +89,16 @@ const LOCAL_DATA_STORAGE_KEYS = [
   "diary-draft-activities",
   "diary-activity-step-minutes",
   "diary-dashboard-view",
+  "diary-app-lock-v1",
   "diary-activity-templates",
   "diary-user-symbols",
   "diary-notification-settings",
   "diary-admin-export-audit",
   "diary-onboarding-done",
   "diary-theme-mode",
+  "diary-font-style",
   "diary-language",
+  "diary-last-sync-at",
   "daily-diary-ios-hint-dismissed-v1",
   "daily-diary-install-banner-dismissed-v1"
 ] as const;
@@ -83,6 +107,8 @@ const ACCOUNT_DELETE_ENDPOINT = process.env.NEXT_PUBLIC_ACCOUNT_DELETE_ENDPOINT?
 const PRIVACY_CONTACT_EMAIL = process.env.NEXT_PUBLIC_PRIVACY_CONTACT_EMAIL?.trim();
 const PURCHASE_PENDING_STATE_KEY = "diary-purchase-pending";
 const PURCHASE_PENDING_TTL_MS = 10 * 60 * 1000;
+const APP_FONT_STYLE_STORAGE_KEY = "diary-font-style";
+const APP_LAST_SYNC_AT_STORAGE_KEY = "diary-last-sync-at";
 
 type PurchasePendingState = {
   token: string;
@@ -207,6 +233,7 @@ export default function Home() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<"light" | "dark">("light");
+  const [fontStyle, setFontStyle] = useState<FontStyle>("default");
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("en");
   const [symbolPlan, setSymbolPlan] = useState<UserSymbolPlan>("free");
   const [planInfo, setPlanInfo] = useState<PlanState>({
@@ -234,6 +261,20 @@ export default function Home() {
     created_at: string | null;
     updated_at: string | null;
   } | null>(null);
+  const [lockConfig, setLockConfig] = useState<AppLockConfig>(DEFAULT_APP_LOCK_CONFIG);
+  const [isAppLocked, setIsAppLocked] = useState(false);
+  const [lockScreenPasscode, setLockScreenPasscode] = useState("");
+  const [lockScreenError, setLockScreenError] = useState("");
+  const [isLockScreenBusy, setIsLockScreenBusy] = useState(false);
+  const [securityPasscode, setSecurityPasscode] = useState("");
+  const [securityPasscodeConfirm, setSecurityPasscodeConfirm] = useState("");
+  const [securityError, setSecurityError] = useState("");
+  const [securityMessage, setSecurityMessage] = useState("");
+  const [isSecurityBusy, setIsSecurityBusy] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const lockAutoBiometricTriedRef = useRef(false);
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const hasAccountDeleteEndpoint = Boolean(ACCOUNT_DELETE_ENDPOINT);
 
   const isPro = symbolPlan === "pro";
@@ -328,6 +369,71 @@ export default function Home() {
     document.documentElement.lang = nextLanguage;
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem(APP_FONT_STYLE_STORAGE_KEY);
+    const nextStyle: FontStyle =
+      saved === "clean" || saved === "rounded" || saved === "default"
+        ? saved
+        : "default";
+    setFontStyle(nextStyle);
+    document.documentElement.setAttribute("data-font-style", nextStyle);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const savedSync = localStorage.getItem(APP_LAST_SYNC_AT_STORAGE_KEY);
+    setLastSyncAt(savedSync);
+
+    const handleSyncStatus = (event: Event) => {
+      const custom = event as CustomEvent<{ ok?: boolean; syncedAt?: string; message?: string }>;
+      const syncedAt = custom.detail?.syncedAt ?? null;
+      if (syncedAt) {
+        setLastSyncAt(syncedAt);
+        localStorage.setItem(APP_LAST_SYNC_AT_STORAGE_KEY, syncedAt);
+      }
+      setIsSyncing(false);
+      if (custom.detail?.message) {
+        if (custom.detail.ok) {
+          setAccountMessage(custom.detail.message);
+          setAccountError("");
+        } else {
+          setAccountError(custom.detail.message);
+        }
+      }
+    };
+
+    window.addEventListener("diary:sync-status", handleSyncStatus);
+    return () => {
+      window.removeEventListener("diary:sync-status", handleSyncStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const config = loadAppLockConfig();
+    setLockConfig(config);
+    setIsAppLocked(shouldRequireAppUnlock(config));
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      const nextConfig = loadAppLockConfig();
+      setLockConfig(nextConfig);
+      if (!shouldRequireAppUnlock(nextConfig)) return;
+      lockAutoBiometricTriedRef.current = false;
+      setLockScreenError("");
+      setLockScreenPasscode("");
+      setIsAppLocked(true);
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
   const closeSettings = () => {
     setIsSettingsOpen(false);
   };
@@ -339,6 +445,7 @@ export default function Home() {
     await supabase.auth.signOut();
     clearPurchaseState();
     clearLocalDiaryData(userId);
+    setLastSyncAt(null);
     emitLocalDataCleared();
     closeSettings();
   };
@@ -355,6 +462,16 @@ export default function Home() {
     }
     clearStoredPlan();
     clearLocalDiaryData(session?.user?.id);
+    setLastSyncAt(null);
+    resetAppLockConfig();
+    setLockConfig(DEFAULT_APP_LOCK_CONFIG);
+    setIsAppLocked(false);
+    setLockScreenPasscode("");
+    setLockScreenError("");
+    setSecurityPasscode("");
+    setSecurityPasscodeConfirm("");
+    setSecurityError("");
+    setSecurityMessage("");
     emitLocalDataCleared();
     setAccountMessage(
       t(
@@ -428,6 +545,33 @@ export default function Home() {
   const isKorean = appLanguage === "ko";
   const appLocale = isKorean ? "ko-KR" : "en-US";
   const t = (en: string, ko: string) => (isKorean ? ko : en);
+  const biometricSupported = isBiometricAvailable();
+  const hasSecurityMethod = lockConfig.useBiometric || lockConfig.usePasscode;
+
+  const applyLockConfig = useCallback(
+    (next: AppLockConfig, options?: { lockNow?: boolean }) => {
+      const normalized: AppLockConfig = {
+        ...next,
+        enabled: Boolean(next.enabled && (next.useBiometric || next.usePasscode)),
+        updatedAt: Date.now()
+      };
+      setLockConfig(normalized);
+      saveAppLockConfig(normalized);
+
+      if (options?.lockNow && shouldRequireAppUnlock(normalized)) {
+        lockAutoBiometricTriedRef.current = false;
+        setLockScreenPasscode("");
+        setLockScreenError("");
+        setIsAppLocked(true);
+        return;
+      }
+
+      if (!shouldRequireAppUnlock(normalized)) {
+        setIsAppLocked(false);
+      }
+    },
+    []
+  );
 
   const formatDateOrDash = (value: string | null) => {
     if (!value) return "—";
@@ -458,6 +602,222 @@ export default function Home() {
     } catch {
       setAccountError(failLabel);
     }
+  };
+
+  const setupBiometricLock = async () => {
+    if (!biometricSupported) {
+      setSecurityError(
+        t(
+          "Biometric unlock is not available on this device/browser.",
+          "이 기기/브라우저에서는 생체 인증 잠금을 사용할 수 없습니다."
+        )
+      );
+      setSecurityMessage("");
+      return;
+    }
+
+    setIsSecurityBusy(true);
+    setSecurityError("");
+    setSecurityMessage("");
+    try {
+      const displayName = session?.user?.email || "Daily Flow User";
+      const credentialId = await registerBiometricCredential(displayName);
+      applyLockConfig({
+        ...lockConfig,
+        enabled: true,
+        useBiometric: true,
+        biometricCredentialId: credentialId
+      });
+      setSecurityMessage(
+        t(
+          "Biometric unlock is enabled.",
+          "생체 인증 잠금이 활성화되었습니다."
+        )
+      );
+    } catch {
+      setSecurityError(
+        t(
+          "Biometric setup was cancelled or failed.",
+          "생체 인증 설정이 취소되었거나 실패했습니다."
+        )
+      );
+    } finally {
+      setIsSecurityBusy(false);
+    }
+  };
+
+  const removeBiometricLock = () => {
+    const confirmMessage = t(
+      "Remove biometric unlock for this device?",
+      "이 기기의 생체 인증 잠금을 해제할까요?"
+    );
+    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
+    applyLockConfig({
+      ...lockConfig,
+      useBiometric: false,
+      biometricCredentialId: null,
+      enabled: lockConfig.usePasscode
+    });
+    setSecurityError("");
+    setSecurityMessage(t("Biometric unlock removed.", "생체 인증 잠금이 해제되었습니다."));
+  };
+
+  const saveAppPasscode = async () => {
+    if (securityPasscode.length < 4) {
+      setSecurityError(t("Passcode must be at least 4 characters.", "앱 비밀번호는 최소 4자 이상이어야 합니다."));
+      setSecurityMessage("");
+      return;
+    }
+    if (securityPasscode !== securityPasscodeConfirm) {
+      setSecurityError(t("Passcode confirmation does not match.", "앱 비밀번호 확인이 일치하지 않습니다."));
+      setSecurityMessage("");
+      return;
+    }
+
+    setIsSecurityBusy(true);
+    setSecurityError("");
+    setSecurityMessage("");
+    try {
+      const record = await createPasscodeRecord(securityPasscode);
+      applyLockConfig({
+        ...lockConfig,
+        enabled: true,
+        usePasscode: true,
+        passcodeSalt: record.salt,
+        passcodeHash: record.hash
+      });
+      setSecurityPasscode("");
+      setSecurityPasscodeConfirm("");
+      setSecurityMessage(t("App passcode is saved.", "앱 비밀번호가 저장되었습니다."));
+    } catch {
+      setSecurityError(
+        t(
+          "Passcode setup failed in this browser.",
+          "이 브라우저에서는 앱 비밀번호 설정에 실패했습니다."
+        )
+      );
+    } finally {
+      setIsSecurityBusy(false);
+    }
+  };
+
+  const removeAppPasscode = () => {
+    const confirmMessage = t(
+      "Remove app passcode for this device?",
+      "이 기기의 앱 비밀번호를 삭제할까요?"
+    );
+    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
+    applyLockConfig({
+      ...lockConfig,
+      usePasscode: false,
+      passcodeSalt: null,
+      passcodeHash: null,
+      enabled: lockConfig.useBiometric
+    });
+    setSecurityPasscode("");
+    setSecurityPasscodeConfirm("");
+    setSecurityError("");
+    setSecurityMessage(t("App passcode removed.", "앱 비밀번호가 삭제되었습니다."));
+  };
+
+  const enableAppLock = () => {
+    if (!hasSecurityMethod) {
+      setSecurityError(
+        t(
+          "Set biometric unlock or app passcode first.",
+          "먼저 생체 인증 또는 앱 비밀번호를 설정해 주세요."
+        )
+      );
+      setSecurityMessage("");
+      return;
+    }
+    applyLockConfig({ ...lockConfig, enabled: true });
+    setSecurityError("");
+    setSecurityMessage(t("App lock is enabled.", "앱 잠금이 활성화되었습니다."));
+  };
+
+  const disableAppLock = () => {
+    applyLockConfig({ ...lockConfig, enabled: false });
+    setIsAppLocked(false);
+    setLockScreenPasscode("");
+    setLockScreenError("");
+    setSecurityError("");
+    setSecurityMessage(t("App lock is disabled.", "앱 잠금이 비활성화되었습니다."));
+  };
+
+  const lockNow = () => {
+    if (!shouldRequireAppUnlock(lockConfig)) return;
+    closeSettings();
+    applyLockConfig(lockConfig, { lockNow: true });
+  };
+
+  const unlockWithPasscode = async () => {
+    if (!lockConfig.usePasscode || !lockConfig.passcodeSalt || !lockConfig.passcodeHash) return;
+    if (!lockScreenPasscode) {
+      setLockScreenError(t("Enter your passcode.", "앱 비밀번호를 입력해 주세요."));
+      return;
+    }
+    setIsLockScreenBusy(true);
+    try {
+      const valid = await verifyPasscode(
+        lockScreenPasscode,
+        lockConfig.passcodeSalt,
+        lockConfig.passcodeHash
+      );
+      if (!valid) {
+        setLockScreenError(t("Incorrect passcode.", "앱 비밀번호가 올바르지 않습니다."));
+        return;
+      }
+      setIsAppLocked(false);
+      setLockScreenPasscode("");
+      setLockScreenError("");
+    } catch {
+      setLockScreenError(
+        t(
+          "Passcode verification failed.",
+          "앱 비밀번호 확인 중 오류가 발생했습니다."
+        )
+      );
+    } finally {
+      setIsLockScreenBusy(false);
+    }
+  };
+
+  const unlockWithBiometric = async () => {
+    if (!lockConfig.useBiometric || !lockConfig.biometricCredentialId) return;
+    setIsLockScreenBusy(true);
+    setLockScreenError("");
+    const success = await authenticateWithBiometric(lockConfig.biometricCredentialId);
+    setIsLockScreenBusy(false);
+    if (!success) {
+      setLockScreenError(
+        t(
+          "Biometric verification failed. Try again or use passcode.",
+          "생체 인증에 실패했습니다. 다시 시도하거나 앱 비밀번호를 사용해 주세요."
+        )
+      );
+      return;
+    }
+    setIsAppLocked(false);
+    setLockScreenPasscode("");
+    setLockScreenError("");
+  };
+
+  const resetAppLockOnDevice = () => {
+    const confirmMessage = t(
+      "Reset app lock on this device? This removes local lock settings only.",
+      "이 기기의 앱 잠금을 초기화할까요? 로컬 잠금 설정만 삭제됩니다."
+    );
+    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
+    resetAppLockConfig();
+    setLockConfig(DEFAULT_APP_LOCK_CONFIG);
+    setIsAppLocked(false);
+    setLockScreenPasscode("");
+    setLockScreenError("");
+    setSecurityPasscode("");
+    setSecurityPasscodeConfirm("");
+    setSecurityError("");
+    setSecurityMessage("");
   };
 
   const buildAccountDeletionDraft = () => {
@@ -748,6 +1108,153 @@ export default function Home() {
     document.documentElement.lang = language;
   };
 
+  const applyFontStyle = (style: FontStyle) => {
+    setFontStyle(style);
+    if (typeof window === "undefined") return;
+    localStorage.setItem(APP_FONT_STYLE_STORAGE_KEY, style);
+    document.documentElement.setAttribute("data-font-style", style);
+  };
+
+  const exportBackupToJson = async () => {
+    if (typeof window === "undefined") return;
+    const localData: Record<string, string> = {};
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (
+        LOCAL_DATA_STORAGE_KEYS.includes(key as (typeof LOCAL_DATA_STORAGE_KEYS)[number]) ||
+        LOCAL_DATA_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))
+      ) {
+        const value = localStorage.getItem(key);
+        if (value !== null) {
+          localData[key] = value;
+        }
+      }
+    }
+
+    const payload = {
+      schemaVersion: "local-backup-v1",
+      exportedAt: new Date().toISOString(),
+      userId: session?.user?.id ?? null,
+      localData
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `daily-flow-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const openRestorePicker = () => {
+    backupFileInputRef.current?.click();
+  };
+
+  const handleRestoreBackupFile = async (file?: File | null) => {
+    if (!file || typeof window === "undefined") return;
+    setAccountError("");
+    setAccountMessage("");
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as {
+        schemaVersion?: string;
+        localData?: Record<string, string>;
+      };
+      if (parsed.schemaVersion !== "local-backup-v1" || !parsed.localData || typeof parsed.localData !== "object") {
+        setAccountError(
+          t("Invalid backup file format.", "백업 파일 형식이 올바르지 않습니다.")
+        );
+        return;
+      }
+
+      Object.entries(parsed.localData).forEach(([key, value]) => {
+        if (typeof value !== "string") return;
+        if (
+          LOCAL_DATA_STORAGE_KEYS.includes(key as (typeof LOCAL_DATA_STORAGE_KEYS)[number]) ||
+          LOCAL_DATA_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))
+        ) {
+          localStorage.setItem(key, value);
+        }
+      });
+
+      const savedTheme = localStorage.getItem("diary-theme-mode");
+      const restoredTheme: "light" | "dark" = savedTheme === "dark" ? "dark" : "light";
+      setThemeMode(restoredTheme);
+      document.documentElement.classList.toggle("dark", restoredTheme === "dark");
+
+      const savedLanguage = localStorage.getItem("diary-language");
+      const restoredLanguage: AppLanguage = savedLanguage === "ko" ? "ko" : "en";
+      setAppLanguage(restoredLanguage);
+      document.documentElement.lang = restoredLanguage;
+
+      const savedFontStyle = localStorage.getItem(APP_FONT_STYLE_STORAGE_KEY);
+      const restoredFontStyle: FontStyle =
+        savedFontStyle === "clean" || savedFontStyle === "rounded" || savedFontStyle === "default"
+          ? savedFontStyle
+          : "default";
+      setFontStyle(restoredFontStyle);
+      document.documentElement.setAttribute("data-font-style", restoredFontStyle);
+
+      const restoredLockConfig = loadAppLockConfig();
+      setLockConfig(restoredLockConfig);
+      setIsAppLocked(shouldRequireAppUnlock(restoredLockConfig));
+      emitLocalDataCleared();
+      setAccountMessage(
+        t("Backup restored on this device.", "이 기기에 백업이 복원되었습니다.")
+      );
+    } catch {
+      setAccountError(
+        t("Failed to restore backup file.", "백업 파일 복원에 실패했습니다.")
+      );
+    } finally {
+      if (backupFileInputRef.current) {
+        backupFileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const triggerManualSync = () => {
+    if (typeof window === "undefined") return;
+    setIsSyncing(true);
+    setAccountError("");
+    setAccountMessage("");
+    window.dispatchEvent(new CustomEvent("diary:sync-now"));
+    window.setTimeout(() => {
+      setIsSyncing(false);
+    }, 8000);
+  };
+
+  const exportCurrentViewToPdf = (range: "day" | "week" | "month") => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent("diary:export-pdf", { detail: { range } }));
+  };
+
+
+  useEffect(() => {
+    if (!isAppLocked) {
+      lockAutoBiometricTriedRef.current = false;
+      return;
+    }
+    if (!lockConfig.useBiometric || !lockConfig.biometricCredentialId || !biometricSupported) return;
+    if (lockAutoBiometricTriedRef.current) return;
+    lockAutoBiometricTriedRef.current = true;
+    setIsLockScreenBusy(true);
+    void authenticateWithBiometric(lockConfig.biometricCredentialId).then((success) => {
+      setIsLockScreenBusy(false);
+      if (!success) {
+        setLockScreenError(
+          isKorean
+            ? "생체 인증에 실패했습니다. 다시 시도하거나 앱 비밀번호를 사용해 주세요."
+            : "Biometric verification failed. Try again or use passcode."
+        );
+        return;
+      }
+      setIsAppLocked(false);
+      setLockScreenError("");
+    });
+  }, [biometricSupported, isAppLocked, isKorean, lockConfig.biometricCredentialId, lockConfig.useBiometric]);
+
   const grantProAfterPurchase = useCallback(async (purchaseToken?: string | null) => {
     if (isPro) {
       // 이미 Pro면 중복 호출이 와도 서버 부하를 줄이기 위해 바로 종료한다.
@@ -985,7 +1492,10 @@ export default function Home() {
             <Settings className="h-4 w-4" />
           </button>
           {isSettingsOpen ? (
-            <div className="absolute right-4 top-full z-40 mt-1 w-72 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 shadow-lg">
+            <div
+              className="absolute right-4 top-full z-40 mt-1 w-72 overflow-y-auto overscroll-contain rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 shadow-lg"
+              style={{ maxHeight: "calc(100dvh - var(--safe-top) - 4.5rem)" }}
+            >
               {/* 비로그인 시: 로그인/회원가입 버튼 */}
               {!session && (
                 <div className="mb-3 flex gap-2">
@@ -1026,6 +1536,87 @@ export default function Home() {
               </div>
               {settingsPanel === "settings" ? (
                 <>
+                  <div className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
+                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-xs">
+                      <div className="min-w-0">
+                        <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
+                          <Globe className="h-3.5 w-3.5" />
+                          {t("iCloud sync", "iCloud 동기화")}
+                        </span>
+                        <p className="mt-0.5 truncate text-[10px] text-[var(--muted)]">
+                          {!session
+                            ? t("Login required for cloud sync.", "클라우드 동기화는 로그인 후 사용 가능합니다.")
+                            : lastSyncAt
+                            ? `${t("Last sync", "마지막 동기화")}: ${formatDateOrDash(lastSyncAt)}`
+                            : t("No recent sync record.", "최근 동기화 기록이 없습니다.")}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={triggerManualSync}
+                        disabled={!session || isSyncing}
+                        className="shrink-0 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isSyncing ? t("Syncing...", "동기화 중...") : t("Sync now", "지금 동기화")}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void exportBackupToJson()}
+                      className="flex w-full items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <Download className="h-3.5 w-3.5" />
+                        {t("Backup", "백업")}
+                      </span>
+                      <span className="text-[10px] text-[var(--muted)]">{t("JSON", "JSON")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openRestorePicker}
+                      className="flex w-full items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <Download className="h-3.5 w-3.5" />
+                        {t("Restore", "복원")}
+                      </span>
+                      <span className="text-[10px] text-[var(--muted)]">{t("From backup file", "백업 파일에서")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportCurrentViewToPdf("day")}
+                      className="flex w-full items-center justify-between gap-2 px-2.5 pt-2 text-left text-xs text-[var(--ink)]"
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <Printer className="h-3.5 w-3.5" />
+                        {t("Export to PDF", "PDF 내보내기")}
+                      </span>
+                      <span className="text-[10px] text-[var(--muted)]">{t("Choose range", "범위 선택")}</span>
+                    </button>
+                    <div className="flex gap-1 border-b border-[var(--border)] px-2.5 pb-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => exportCurrentViewToPdf("day")}
+                        className="flex-1 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                      >
+                        {t("Day", "일간")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => exportCurrentViewToPdf("week")}
+                        className="flex-1 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                      >
+                        {t("Week", "주간")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => exportCurrentViewToPdf("month")}
+                        className="flex-1 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                      >
+                        {t("Month", "월간")}
+                      </button>
+                    </div>
+                  </div>
                   <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Theme", "테마")}</p>
                   <div className="mb-2 flex items-center gap-1 text-xs">
                     <button
@@ -1076,6 +1667,45 @@ export default function Home() {
                       KO
                     </button>
                   </div>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Font styles", "폰트 스타일")}</p>
+                  <div className="mb-2 rounded-md border border-[var(--border)] p-2">
+                    <div className="mb-1.5 flex items-center gap-1 text-[var(--ink)]">
+                      <Palette className="h-3.5 w-3.5" />
+                      <span className="text-xs font-semibold">{t("Typography preset", "타이포 프리셋")}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-xs">
+                      <button
+                        onClick={() => applyFontStyle("default")}
+                        className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
+                          fontStyle === "default"
+                            ? "border-[var(--primary)] text-[var(--ink)]"
+                            : "border-[var(--border)] text-[var(--muted)]"
+                        }`}
+                      >
+                        {t("Default", "기본")}
+                      </button>
+                      <button
+                        onClick={() => applyFontStyle("clean")}
+                        className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
+                          fontStyle === "clean"
+                            ? "border-[var(--primary)] text-[var(--ink)]"
+                            : "border-[var(--border)] text-[var(--muted)]"
+                        }`}
+                      >
+                        {t("Clean", "클린")}
+                      </button>
+                      <button
+                        onClick={() => applyFontStyle("rounded")}
+                        className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
+                          fontStyle === "rounded"
+                            ? "border-[var(--primary)] text-[var(--ink)]"
+                            : "border-[var(--border)] text-[var(--muted)]"
+                        }`}
+                      >
+                        {t("Rounded", "라운드")}
+                      </button>
+                    </div>
+                  </div>
                   {/* 알림 설정 */}
                   <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Notifications", "알림")}</p>
                   <div className="mb-2 rounded-md border border-[var(--border)] p-2">
@@ -1114,6 +1744,134 @@ export default function Home() {
                       </>
                     )}
                   </div>
+                  <details className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
+                    <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-2 text-xs font-semibold text-[var(--ink)]">
+                      <span>{t("Security lock", "보안 잠금")}</span>
+                      {lockConfig.enabled ? (
+                        <span className="rounded-full bg-[var(--primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--primary)]">
+                          {t("On", "켜짐")}
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-[var(--bg-hover)] px-2 py-0.5 text-[10px] font-semibold text-[var(--muted)]">
+                          {t("Off", "꺼짐")}
+                        </span>
+                      )}
+                    </summary>
+                    <div className="border-t border-[var(--border)] p-2">
+                      <p className="mb-2 text-[11px] leading-5 text-[var(--muted)]">
+                        {t(
+                          "Protect app access with Face ID/Touch ID and/or a local app passcode.",
+                          "Face ID/Touch ID 또는 로컬 앱 비밀번호로 앱 접근을 보호합니다."
+                        )}
+                      </p>
+                      <div className="mb-2 flex gap-2">
+                        {lockConfig.enabled ? (
+                          <button
+                            type="button"
+                            onClick={disableAppLock}
+                            className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                          >
+                            {t("Disable lock", "잠금 끄기")}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={enableAppLock}
+                            disabled={!hasSecurityMethod}
+                            className="flex-1 rounded-md bg-[var(--primary)] px-2 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {t("Enable lock", "잠금 켜기")}
+                          </button>
+                        )}
+                        {lockConfig.enabled ? (
+                          <button
+                            type="button"
+                            onClick={lockNow}
+                            className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                          >
+                            {t("Lock now", "지금 잠그기")}
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-md border border-[var(--border)] p-2">
+                        <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
+                          <Fingerprint className="h-3.5 w-3.5" />
+                          {t("Face ID / Touch ID", "Face ID / Touch ID")}
+                        </p>
+                        <p className="mb-2 text-[10px] leading-4 text-[var(--muted)]">
+                          {biometricSupported
+                            ? t("Uses this device's built-in biometric prompt.", "이 기기의 생체 인증 프롬프트를 사용합니다.")
+                            : t("Biometric API is unavailable in this browser.", "이 브라우저에서는 생체 인증 API를 사용할 수 없습니다.")}
+                        </p>
+                        {lockConfig.useBiometric ? (
+                          <button
+                            type="button"
+                            onClick={removeBiometricLock}
+                            disabled={isSecurityBusy}
+                            className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
+                          >
+                            {t("Remove biometric lock", "생체 인증 잠금 해제")}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void setupBiometricLock()}
+                            disabled={!biometricSupported || isSecurityBusy}
+                            className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {isSecurityBusy ? t("Setting up...", "설정 중...") : t("Set up biometric lock", "생체 인증 잠금 설정")}
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="mt-2 rounded-md border border-[var(--border)] p-2">
+                        <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
+                          <Lock className="h-3.5 w-3.5" />
+                          {t("App passcode", "앱 비밀번호")}
+                        </p>
+                        <input
+                          value={securityPasscode}
+                          onChange={(e) => setSecurityPasscode(e.target.value)}
+                          type="password"
+                          className="n-input mb-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
+                          placeholder={t("Enter app passcode", "앱 비밀번호 입력")}
+                          autoComplete="new-password"
+                        />
+                        <input
+                          value={securityPasscodeConfirm}
+                          onChange={(e) => setSecurityPasscodeConfirm(e.target.value)}
+                          type="password"
+                          className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
+                          placeholder={t("Confirm app passcode", "앱 비밀번호 확인")}
+                          autoComplete="new-password"
+                        />
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void saveAppPasscode()}
+                            disabled={isSecurityBusy}
+                            className="flex-1 rounded-md bg-[var(--primary)] px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                          >
+                            {lockConfig.usePasscode ? t("Update passcode", "비밀번호 변경") : t("Set passcode", "비밀번호 설정")}
+                          </button>
+                          {lockConfig.usePasscode ? (
+                            <button
+                              type="button"
+                              onClick={removeAppPasscode}
+                              disabled={isSecurityBusy}
+                              className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
+                            >
+                              {t("Remove passcode", "비밀번호 삭제")}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {securityError ? <p className="mt-2 text-[11px] text-[var(--danger)]">{securityError}</p> : null}
+                      {securityMessage ? <p className="mt-2 text-[11px] text-[var(--success)]">{securityMessage}</p> : null}
+                    </div>
+                  </details>
                   <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Plan", "플랜")}</p>
                   <div className="mb-2 rounded-md border border-[var(--border)] p-2">
                     <div className="mb-2 flex items-center justify-between gap-2 text-xs">
@@ -1194,6 +1952,8 @@ export default function Home() {
                       {t("Admin", "관리자")}
                     </button>
                   ) : null}
+                  {accountError && <p className="mb-2 text-xs text-[var(--danger)]">{accountError}</p>}
+                  {accountMessage && <p className="mb-2 text-xs text-[var(--success)]">{accountMessage}</p>}
                   {planError && <p className="mb-2 text-xs text-[var(--danger)]">{planError}</p>}
                 </>
               ) : (
@@ -1470,6 +2230,13 @@ export default function Home() {
                   )}
                 </>
               )}
+              <input
+                ref={backupFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => void handleRestoreBackupFile(e.target.files?.[0] ?? null)}
+              />
               {session ? (
                 <button
                   onClick={() => void signOut()}
@@ -1499,6 +2266,65 @@ export default function Home() {
           appLanguage={appLanguage}
         />
       </ErrorBoundary>
+      {isAppLocked ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 shadow-xl">
+            <div className="mb-2 flex items-center gap-2 text-[var(--ink)]">
+              <ShieldAlert className="h-5 w-5 text-[var(--primary)]" />
+              <h2 className="text-sm font-semibold">{t("App is locked", "앱이 잠겨 있습니다")}</h2>
+            </div>
+            <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
+              {t(
+                "Unlock with Face ID/Touch ID or your app passcode to continue.",
+                "계속하려면 Face ID/Touch ID 또는 앱 비밀번호로 잠금을 해제해 주세요."
+              )}
+            </p>
+
+            {lockConfig.useBiometric ? (
+              <button
+                type="button"
+                onClick={() => void unlockWithBiometric()}
+                disabled={!biometricSupported || isLockScreenBusy}
+                className="mb-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isLockScreenBusy
+                  ? t("Checking biometric...", "생체 인증 확인 중...")
+                  : t("Unlock with Face ID / Touch ID", "Face ID / Touch ID로 잠금 해제")}
+              </button>
+            ) : null}
+
+            {lockConfig.usePasscode ? (
+              <div className="space-y-2">
+                <input
+                  value={lockScreenPasscode}
+                  onChange={(e) => setLockScreenPasscode(e.target.value)}
+                  type="password"
+                  className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs"
+                  placeholder={t("Enter app passcode", "앱 비밀번호 입력")}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => void unlockWithPasscode()}
+                  disabled={isLockScreenBusy}
+                  className="w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                >
+                  {t("Unlock", "잠금 해제")}
+                </button>
+              </div>
+            ) : null}
+
+            {lockScreenError ? <p className="mt-2 text-[11px] text-[var(--danger)]">{lockScreenError}</p> : null}
+            <button
+              type="button"
+              onClick={resetAppLockOnDevice}
+              className="mt-3 w-full rounded-md border border-[var(--border)] px-3 py-2 text-[11px] font-semibold text-[var(--muted)] hover:bg-[var(--bg-hover)]"
+            >
+              {t("Reset lock on this device", "이 기기의 잠금 초기화")}
+            </button>
+          </div>
+        </div>
+      ) : null}
       {/* 로그인/회원가입 모달 — authMode가 설정되어 있고 비로그인일 때만 표시 */}
       {authMode && !session && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur">

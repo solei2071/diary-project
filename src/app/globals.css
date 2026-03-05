@@ -4,7 +4,7 @@
  * - @tailwind: Tailwind CSS의 base/components/utilities 레이어 포함
  * - :root: CSS 변수로 디자인 토큰 정의 (테마 변경 용이)
  */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&family=Nunito:wght@400;600;700&display=swap");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -95,6 +95,18 @@ body {
   -webkit-overflow-scrolling: touch;
   touch-action: manipulation;
   -webkit-text-size-adjust: 100%;
+}
+
+html[data-font-style="default"] body {
+  font-family: "Inter", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+}
+
+html[data-font-style="clean"] body {
+  font-family: "IBM Plex Sans", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+}
+
+html[data-font-style="rounded"] body {
+  font-family: "Nunito", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
 }
 
 *,

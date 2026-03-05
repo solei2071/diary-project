@@ -280,6 +280,7 @@ type SyncConflictState = {
 };
 
 type DiaryTab = "todo" | "activity" | "dashboard" | "notes";
+type PdfRange = "day" | "week" | "month";
 
 type Props = {
   session: Session | null;
@@ -374,6 +375,14 @@ const normalizeDraftActivity = (row: UiActivityDraft): UiActivity => ({
   startTime: normalizeClockValue(row.start_time),
   endTime: normalizeClockValue(row.end_time)
 });
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 /** 자동 포맷 시간 입력 (HH:MM) — 숫자만 허용, 자동 ":" 삽입, 4자리 완성 시 다음 필드 이동 */
 function TimeInput({ value, onCommit, onAutoAdvance, ariaLabel, dataField }: {
@@ -574,6 +583,7 @@ export default function DailyDiary({
   const [isTodoDirty, setIsTodoDirty] = useState(false);
   const [isJournalDirty, setIsJournalDirty] = useState(false);
   const [isActivityDirty, setIsActivityDirty] = useState(false);
+  const [isSavingActivity, setIsSavingActivity] = useState(false);
   const [journalText, setJournalText] = useState("");
   const [todoError, setTodoError] = useState("");
   const [journalError, setJournalError] = useState("");
@@ -613,6 +623,7 @@ export default function DailyDiary({
   const [activityLabelEditingByDate, setActivityLabelEditingByDate] = useState<Record<string, boolean>>({});
   const [todoRepeatDays, setTodoRepeatDays] = useState<number[]>([]);
   const [todoRepeatWeeks, setTodoRepeatWeeks] = useState<number>(TODO_REPEAT_WEEKS[1] ?? 1);
+  const [isTodoRepeatSettingsOpen, setIsTodoRepeatSettingsOpen] = useState(false);
   const [activityConflictWarnings, setActivityConflictWarnings] = useState<Record<string, string>>({});
   const diaryTabs: { id: DiaryTab; label: string; icon: typeof ListTodo; compactLabel?: string }[] = useMemo(
     () => [
@@ -1592,6 +1603,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       } catch (err) {
         if (err instanceof DOMException && err.name === "QuotaExceededError") {
           console.warn("[Draft] localStorage quota exceeded — todo draft not saved");
+          showToast(t("Storage full — draft not saved", "저장 공간 부족 — 임시저장 실패"), "error");
         }
       }
       return next;
@@ -1606,6 +1618,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       } catch (err) {
         if (err instanceof DOMException && err.name === "QuotaExceededError") {
           console.warn("[Draft] localStorage quota exceeded — journal draft not saved");
+          showToast(t("Storage full — draft not saved", "저장 공간 부족 — 임시저장 실패"), "error");
         }
       }
       return next;
@@ -1631,6 +1644,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       } catch (err) {
         if (err instanceof DOMException && err.name === "QuotaExceededError") {
           console.warn("[Draft] localStorage quota exceeded — activity draft not saved");
+          showToast(t("Storage full — draft not saved", "저장 공간 부족 — 임시저장 실패"), "error");
         }
       }
       return next;
@@ -1824,6 +1838,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setTodos(nextTodos);
     setNewTodoTitle("");
     setIsAddingTodo(false);
+    setIsTodoRepeatSettingsOpen(false);
     setIsTodoDirty(true);
     showToast(t("Task added", "할 일이 추가되었습니다"), "success");
 
@@ -1983,9 +1998,11 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
   ) => {
     if (!user) return;
     setIsActivityDirty(true);
+    setIsSavingActivity(true);
 
     const hasConflict = await hasSyncConflictForSave("activity", selectedDate);
     if (hasConflict) {
+      setIsSavingActivity(false);
       return;
     }
 
@@ -2000,12 +2017,14 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
         setActivityError(getSafeSupabaseError(error.message));
         if (shouldIgnoreSupabaseSchemaError(error.message)) {
           setIsActivityDirty(false);
+          setIsSavingActivity(false);
           return;
         }
         await loadData(selectedDate);
         setIsActivityDirty(false);
       }
       setIsActivityDirty(false);
+      setIsSavingActivity(false);
       return;
     }
 
@@ -2020,10 +2039,12 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       setActivityError(getSafeSupabaseError(cleanupError.error.message));
       if (shouldIgnoreSupabaseSchemaError(cleanupError.error.message)) {
         setIsActivityDirty(false);
+        setIsSavingActivity(false);
         return;
       }
       await loadData(selectedDate);
       setIsActivityDirty(false);
+      setIsSavingActivity(false);
       return;
     }
 
@@ -2045,12 +2066,14 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       setActivityError(getSafeSupabaseError(error.message));
       if (shouldIgnoreSupabaseSchemaError(error.message)) {
         setIsActivityDirty(false);
+        setIsSavingActivity(false);
         return;
       }
       await loadData(selectedDate);
       setIsActivityDirty(false);
     }
     setIsActivityDirty(false);
+    setIsSavingActivity(false);
   };
 
   /** 활동 시간 갱신 (로컬 state + 로그인 시 DB 저장) */
@@ -2377,6 +2400,13 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     };
   }, [loadData, selectedDate]);
 
+  useEffect(() => {
+    if (activeDiaryTab !== "dashboard") {
+      setIsSearchOpen(false);
+      setIsStatsOpen(false);
+    }
+  }, [activeDiaryTab]);
+
   // 활동 로드 시 라벨이 없는 항목은 자동으로 편집 모드 진입
   useEffect(() => {
     setActivityLabelEditingByDate((prev) => {
@@ -2398,9 +2428,225 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   const syncConflictMessage = syncConflict
     ? buildSyncConflictMessage(syncConflict.scope, prettyDateLabel(syncConflict.date, appLocale), isKorean)
     : null;
+  const todoRepeatSummary = !canTodoRepeat
+    ? t("Pro only", "Pro 전용")
+    : todoRepeatDays.length === 0
+      ? t("Off", "끔")
+      : `${TODO_REPEAT_DAY_LABELS
+          .filter((entry) => todoRepeatDays.includes(entry.value))
+          .map((entry) => (isKorean ? entry.ko : entry.en))
+          .join(", ")} · ${todoRepeatWeeks}${t("w", "주")}`;
+
+  const buildPdfTitle = (range: PdfRange) => {
+    if (range === "day") return t("Daily Report", "일간 리포트");
+    if (range === "week") return t("Weekly Report", "주간 리포트");
+    return t("Monthly Report", "월간 리포트");
+  };
+
+  const buildPdfRangeLabel = (range: PdfRange) => {
+    if (range === "day") {
+      return prettyDateLabel(selectedDate, appLocale);
+    }
+    if (range === "week") {
+      return weeklyRangeLabel;
+    }
+    return monthlyRangeLabel;
+  };
+
+  const toPdfRows = (range: PdfRange) => {
+    const days = range === "day"
+      ? [selectedDate]
+      : range === "week"
+        ? getWeekRangeDates(selectedDate)
+        : getMonthRangeDates(selectedDate);
+
+    return days.map((day) => {
+      const dayActivities =
+        range === "day"
+          ? activities
+          : (monthActivitiesByDate[day] ?? []);
+      const dayNotes =
+        range === "day"
+          ? splitMemoLines(journalText)
+          : splitMemoLines(monthJournalByDate[day] ?? "");
+
+      return {
+        day,
+        label: prettyDateLabel(day, appLocale),
+        activities: dayActivities
+          .filter((item) => item.hours > 0)
+          .slice()
+          .sort((a, b) => a.emoji.localeCompare(b.emoji)),
+        notes: dayNotes
+      };
+    });
+  };
+
+  const openPdfPrintWindow = (range: PdfRange) => {
+    if (typeof window === "undefined") return;
+    const rows = toPdfRows(range);
+    const totalHours = rows.reduce(
+      (sum, row) => sum + row.activities.reduce((acc, item) => acc + Number(item.hours || 0), 0),
+      0
+    );
+    const activeDays = rows.filter((row) => row.activities.length > 0).length;
+    const generatedAt = new Date().toLocaleString(appLocale);
+    const title = buildPdfTitle(range);
+    const rangeLabel = buildPdfRangeLabel(range);
+
+    const cardsHtml = rows.map((row) => {
+      const activitiesHtml = row.activities.length
+        ? row.activities.map((item) => `
+            <tr>
+              <td class="emoji">${escapeHtml(item.emoji)}</td>
+              <td>${escapeHtml(formatHoursLabel(item.hours))}</td>
+              <td>${escapeHtml(formatActivityTimeWindow(item))}</td>
+              <td>${escapeHtml(item.label || "")}</td>
+            </tr>
+          `).join("")
+        : `<tr><td colspan="4" class="muted">${escapeHtml(t("No activity records", "활동 기록 없음"))}</td></tr>`;
+
+      const notesHtml = row.notes.length
+        ? row.notes.map((note) => `<li>${escapeHtml(note.replace(/^-\s*/, ""))}</li>`).join("")
+        : `<li class="muted">${escapeHtml(t("No notes", "노트 없음"))}</li>`;
+
+      return `
+        <section class="card">
+          <h3>${escapeHtml(row.label)}</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>${escapeHtml(t("Emoji", "이모지"))}</th>
+                <th>${escapeHtml(t("Duration", "시간"))}</th>
+                <th>${escapeHtml(t("Time window", "시간대"))}</th>
+                <th>${escapeHtml(t("Label", "라벨"))}</th>
+              </tr>
+            </thead>
+            <tbody>${activitiesHtml}</tbody>
+          </table>
+          <div class="notes">
+            <strong>${escapeHtml(t("Notes", "노트"))}</strong>
+            <ul>${notesHtml}</ul>
+          </div>
+        </section>
+      `;
+    }).join("");
+
+    const html = `
+      <!doctype html>
+      <html lang="${isKorean ? "ko" : "en"}">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>${escapeHtml(title)}</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #111827; background: #fff; }
+          .wrap { padding: 20px; max-width: 900px; margin: 0 auto; }
+          .header { margin-bottom: 14px; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
+          .title { font-size: 20px; font-weight: 700; margin: 0; }
+          .meta { margin-top: 6px; color: #6b7280; font-size: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
+          .cards { display: grid; gap: 12px; }
+          .card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; page-break-inside: avoid; }
+          .card h3 { margin: 0 0 8px; font-size: 14px; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th, td { border-bottom: 1px solid #f3f4f6; text-align: left; padding: 6px 4px; vertical-align: top; }
+          th { font-weight: 600; color: #374151; }
+          td.emoji { width: 44px; font-size: 15px; }
+          .notes { margin-top: 8px; font-size: 12px; }
+          .notes ul { margin: 6px 0 0; padding-left: 16px; }
+          .notes li { margin-bottom: 4px; }
+          .muted { color: #9ca3af; }
+          @page { size: auto; margin: 14mm; }
+        </style>
+      </head>
+      <body>
+        <main class="wrap">
+          <header class="header">
+            <h1 class="title">${escapeHtml(title)}</h1>
+            <div class="meta">
+              <span>${escapeHtml(rangeLabel)}</span>
+              <span>${escapeHtml(`${t("Total hours", "총 시간")}: ${formatHoursLabel(totalHours)}`)}</span>
+              <span>${escapeHtml(`${t("Active days", "활동일")}: ${activeDays}`)}</span>
+              <span>${escapeHtml(`${t("Generated", "생성 시각")}: ${generatedAt}`)}</span>
+            </div>
+          </header>
+          <section class="cards">${cardsHtml}</section>
+        </main>
+      </body>
+      </html>
+    `;
+
+    const popup = window.open("", "_blank", "noopener,noreferrer,width=980,height=900");
+    if (!popup) {
+      showToast(t("Popup blocked — allow popups to export PDF.", "팝업 차단 — PDF 내보내기를 위해 팝업 허용이 필요합니다."), "error");
+      return;
+    }
+    popup.document.open();
+    popup.document.write(html);
+    popup.document.close();
+    popup.focus();
+    window.setTimeout(() => {
+      popup.print();
+    }, 250);
+  };
+
+  useEffect(() => {
+    const handleManualSync = () => {
+      const run = async () => {
+        try {
+          const target = selectedDateRef.current;
+          await loadDataRef.current(target);
+          await loadMonthFlowRef.current(target);
+          window.dispatchEvent(
+            new CustomEvent("diary:sync-status", {
+              detail: {
+                ok: true,
+                syncedAt: new Date().toISOString(),
+                message: t("Sync completed.", "동기화가 완료되었습니다.")
+              }
+            })
+          );
+        } catch {
+          window.dispatchEvent(
+            new CustomEvent("diary:sync-status", {
+              detail: {
+                ok: false,
+                message: t("Sync failed. Please try again.", "동기화에 실패했습니다. 다시 시도해 주세요.")
+              }
+            })
+          );
+        }
+      };
+      void run();
+    };
+
+    window.addEventListener("diary:sync-now", handleManualSync);
+    return () => {
+      window.removeEventListener("diary:sync-now", handleManualSync);
+    };
+  }, [isKorean]);
+
+  useEffect(() => {
+    const handleExportPdf = (event: Event) => {
+      const custom = event as CustomEvent<{ range?: PdfRange }>;
+      const range = custom.detail?.range ?? "day";
+      openPdfPrintWindow(range);
+    };
+
+    window.addEventListener("diary:export-pdf", handleExportPdf);
+    return () => {
+      window.removeEventListener("diary:export-pdf", handleExportPdf);
+    };
+  }, [openPdfPrintWindow]);
 
   return (
     <main className="flex min-h-screen w-full flex-col pb-16 md:pb-0">
+      <div className="mx-auto mt-4 w-full max-w-5xl px-4 sm:mt-5">
+        <h2 className="text-base font-bold text-[var(--ink)]">
+          {prettyDateLabel(selectedDate, appLocale)}
+        </h2>
+      </div>
       {syncConflictMessage ? (
         <div className="mx-auto mt-3 w-full max-w-5xl px-4">
         <div className="flex flex-col gap-2 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-3 py-2 text-xs text-[var(--danger)] sm:flex-row sm:items-start sm:justify-between sm:gap-3">
@@ -2551,9 +2797,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
           {/* 날짜 헤딩 + 검색/통계 + 탭 */}
           <div className="fade-up space-y-2">
-            <h2 className="text-base font-bold text-[var(--ink)]">
-              {prettyDateLabel(selectedDate, appLocale)}
-            </h2>
             {activeDiaryTab === "dashboard" ? (
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
@@ -2602,7 +2845,15 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
             <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
               <span className="n-h2">{t("To-do", "할 일")}</span>
               <button
-                onClick={() => setIsAddingTodo((prev) => !prev)}
+                onClick={() => {
+                  setIsAddingTodo((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setIsTodoRepeatSettingsOpen(false);
+                    }
+                    return next;
+                  });
+                }}
                 className="ml-auto n-btn-ghost px-2 py-1 text-sm"
                   aria-label={t("Add to-do", "할 일 추가")}
                 >
@@ -2640,12 +2891,28 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       placeholder={t("Add a task", "할 일을 입력하세요")}
                       aria-label={t("Todo input", "할 일 입력")}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setIsTodoRepeatSettingsOpen((prev) => !prev)}
+                      className={`inline-flex h-10 shrink-0 items-center gap-1 rounded-md border px-2 ${
+                        isTodoRepeatSettingsOpen
+                          ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                      aria-label={t("Open repeat settings", "반복 설정 열기")}
+                      title={t("Repeat settings", "반복 설정")}
+                    >
+                      <Settings className="h-4 w-4" />
+                      <span className="text-[11px] font-semibold">{t("Repeat", "반복")}</span>
+                      <span className="text-[10px] opacity-80">{todoRepeatSummary}</span>
+                    </button>
                     <button onClick={() => void addTodo()} className="n-btn-primary shrink-0">
                       {t("Add", "추가")}
                     </button>
                     <button
                       onClick={() => {
                         setIsAddingTodo(false);
+                        setIsTodoRepeatSettingsOpen(false);
                         setNewTodoTitle("");
                         setTodoRepeatDays([]);
                         setTodoRepeatWeeks(TODO_REPEAT_WEEKS[1] ?? 1);
@@ -2655,7 +2922,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       {t("Cancel", "취소")}
                     </button>
                   </div>
-                  <div className="mt-2 rounded-lg border border-[var(--border)] p-2">
+                  {isTodoRepeatSettingsOpen ? (
+                    <div className="mt-2 rounded-lg border border-[var(--border)] p-2">
                     <p className="mb-1.5 text-xs text-[var(--muted)]">{t("Repeat on", "반복 요일")}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {TODO_REPEAT_DAY_LABELS.map((entry) => {
@@ -2694,7 +2962,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     {!canTodoRepeat ? (
                       <p className="mt-1 text-xs text-[var(--muted)]">{t("Repeat scheduling is available on Pro.", "반복 설정은 Pro에서 이용 가능합니다.")}</p>
                     ) : null}
-                  </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <ul>
@@ -2724,6 +2993,9 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-3">
         <span className="n-h2">{t("Activity", "활동")}</span>
+        {isSavingActivity && (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--muted)]" aria-label={t("Saving", "저장 중")} />
+        )}
         <button
           onClick={toggleSymbolPicker}
         className="ml-auto inline-flex items-center gap-1 rounded border border-[var(--primary)]/40 bg-[var(--primary)]/12 px-2 py-1 text-xs font-semibold text-[var(--primary)]"
