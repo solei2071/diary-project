@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Daily Flow Diary icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f5f7ff" />
+      <stop offset="100%" stop-color="#dce9ff" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <rect x="96" y="112" width="320" height="288" rx="20" fill="#2383e2" opacity="0.12" />
+  <path d="M146 160h220v24H146zM146 216h220v24H146zM146 272h150v24H146z" fill="#2383e2" />
+  <circle cx="352" cy="284" r="34" fill="#2383e2" />
+  <path d="M336 268h32v16h-32zM336 284h32v16h-32zM336 300h32v16h-32z" fill="#fff" />
+  <circle cx="118" cy="188" r="12" fill="#4f8dfb" />
+  <circle cx="118" cy="244" r="12" fill="#4f8dfb" />
+  <circle cx="118" cy="300" r="12" fill="#4f8dfb" />
+</svg>
