@@ -25,7 +25,8 @@ import {
   Settings,
   Trash2,
   ListTodo,
-  LayoutDashboard
+  LayoutDashboard,
+  PenSquare,
 } from "lucide-react";
 import { useToast } from "./Toast";
 import type { Session } from "@supabase/supabase-js";
@@ -444,11 +445,13 @@ function TimeInput({ value, onCommit, onAutoAdvance, ariaLabel, dataField }: {
 type SwipeableTodoItemProps = {
   todo: UiTodo;
   onToggle: () => void;
+  onEdit: () => void;
   onDelete: () => void;
+  onEditTodoLabel: string;
   onDeleteTodoLabel: string;
 };
 
-function SwipeableTodoItem({ todo, onToggle, onDelete, onDeleteTodoLabel }: SwipeableTodoItemProps) {
+function SwipeableTodoItem({ todo, onToggle, onEdit, onDelete, onEditTodoLabel, onDeleteTodoLabel }: SwipeableTodoItemProps) {
   const [swipeX, setSwipeX] = useState(0);
   const [isActive, setIsActive] = useState(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -553,6 +556,14 @@ function SwipeableTodoItem({ todo, onToggle, onDelete, onDeleteTodoLabel }: Swip
         </label>
         <button
           type="button"
+          onClick={(e) => { e.stopPropagation(); onEdit(); }}
+          className="h-6 w-6 shrink-0 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-[var(--muted)] hover:text-[var(--ink)]"
+          aria-label={onEditTodoLabel}
+        >
+          <PenSquare className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="h-6 w-6 shrink-0 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-[var(--muted)] hover:text-[var(--danger)]"
           aria-label={onDeleteTodoLabel}
@@ -572,7 +583,7 @@ export default function DailyDiary({
   appLanguage = "en"
 }: Props) {
   const isKorean = appLanguage === "ko";
-  const t = (en: string, ko: string) => (isKorean ? ko : en);
+  const t = useCallback((en: string, ko: string) => (isKorean ? ko : en), [isKorean]);
   const user = session?.user ?? null;
   const isGuest = !user;
   const { show: showToast } = useToast();
@@ -615,7 +626,7 @@ export default function DailyDiary({
   const [journalUpdatedAt, setJournalUpdatedAt] = useState<string | null>(null);
   const [todoUpdatedAt, setTodoUpdatedAt] = useState<string | null>(null);
   const [activityUpdatedAt, setActivityUpdatedAt] = useState<string | null>(null);
-  const [activeDiaryTab, setActiveDiaryTab] = useState<DiaryTab>("todo");
+  const [activeDiaryTab, setActiveDiaryTab] = useState<DiaryTab>("activity");
   const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
   const [customEmoji, setCustomEmoji] = useState("");
   const [customHours, setCustomHours] = useState("");
@@ -625,15 +636,12 @@ export default function DailyDiary({
   const [todoRepeatWeeks, setTodoRepeatWeeks] = useState<number>(TODO_REPEAT_WEEKS[1] ?? 1);
   const [isTodoRepeatSettingsOpen, setIsTodoRepeatSettingsOpen] = useState(false);
   const [activityConflictWarnings, setActivityConflictWarnings] = useState<Record<string, string>>({});
-  const diaryTabs: { id: DiaryTab; label: string; icon: typeof ListTodo; compactLabel?: string }[] = useMemo(
-    () => [
-      { id: "activity", label: t("Activity", "활동"), compactLabel: t("activity", "활동"), icon: Clock3 },
-      { id: "notes", label: t("Notes", "노트"), icon: FileText },
-      { id: "todo", label: t("To-do", "할 일"), icon: ListTodo },
-      { id: "dashboard", label: t("Dashboard", "대시보드"), compactLabel: t("dash", "대시"), icon: LayoutDashboard }
-    ],
-    [isKorean]
-  );
+  const diaryTabs: { id: DiaryTab; label: string; icon: typeof ListTodo; compactLabel?: string }[] = [
+    { id: "activity", label: t("Activity", "활동"), compactLabel: t("activity", "활동"), icon: Clock3 },
+    { id: "notes", label: t("Notes", "노트"), icon: FileText },
+    { id: "todo", label: t("To-do", "할 일"), icon: ListTodo },
+    { id: "dashboard", label: t("Dashboard", "대시보드"), compactLabel: t("dash", "대시"), icon: LayoutDashboard }
+  ];
   const activityListRef = useRef<HTMLDivElement | null>(null);
   const activityTrashRef = useRef<HTMLDivElement | null>(null);
   const [isDraggingActivity, setIsDraggingActivity] = useState(false);
@@ -658,7 +666,7 @@ export default function DailyDiary({
     } catch {
       // no-op
     }
-    return 15;
+    return 30;
   });
   const [isActivityStepPickerOpen, setIsActivityStepPickerOpen] = useState(false);
   const toggleSymbolPicker = useCallback(() => {
@@ -713,6 +721,7 @@ export default function DailyDiary({
     lastX: number;
     isHorizontalSwipe: boolean;
   } | null>(null);
+  const openPdfPrintWindowRef = useRef<(range: PdfRange) => void>(() => {});
   const isTabSwipeTarget = (target: EventTarget | null) => {
     const el = target as HTMLElement | null;
     if (!el) return false;
@@ -1130,7 +1139,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       month: "short",
       year: "numeric"
     });
-  }, [dashboardViewMode, currentMonth]);
+  }, [dashboardViewMode, currentMonth, appLocale]);
   const symbolLabelByEmoji = useMemo(() => {
     const map = new Map<string, string>();
     userSymbols.forEach((symbol) => {
@@ -1623,7 +1632,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       }
       return next;
     });
-  }, [selectedDate]);
+  }, [selectedDate, showToast, t]);
 
   const updateDraftActivities = (items: UiActivity[]) => {
     setDraftActivitiesByDate((prev) => {
@@ -1755,6 +1764,59 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       return;
     }
     setIsTodoDirty(false);
+  };
+
+  /** 할 일 제목 수정 */
+  const editTodo = async (todo: UiTodo) => {
+    if (typeof window === "undefined") return;
+    const nextInput = window.prompt(t("Edit task", "할 일 수정"), todo.title);
+    if (nextInput === null) return;
+
+    const nextTitle = nextInput.trim();
+    if (!nextTitle) {
+      setTodoError(t("Please enter a task.", "할 일을 입력해 주세요."));
+      return;
+    }
+    if (nextTitle === todo.title) return;
+
+    setTodoError("");
+    const prev = [...todos];
+    const updated = sortTodosForDisplay(
+      todos.map((item) => (item.id === todo.id ? { ...item, title: nextTitle } : item))
+    );
+    setTodos(updated);
+    setIsTodoDirty(true);
+
+    if (await hasSyncConflictForSave("todo", selectedDate)) {
+      setTodos(sortTodosForDisplay(prev));
+      setIsTodoDirty(false);
+      return;
+    }
+
+    if (!user) {
+      updateDraftTodo(updated);
+      setIsTodoDirty(false);
+      showToast(t("Task updated", "할 일이 수정되었습니다"), "success");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("todos")
+      .update({ title: nextTitle })
+      .eq("id", todo.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      if (!shouldIgnoreSupabaseSchemaError(error.message)) {
+        setTodos(sortTodosForDisplay(prev));
+      }
+      setTodoError(getSafeSupabaseError(error.message));
+      setIsTodoDirty(false);
+      return;
+    }
+
+    setIsTodoDirty(false);
+    showToast(t("Task updated", "할 일이 수정되었습니다"), "success");
   };
 
 /** 할 일 삭제 (Optimistic UI + Undo 지원) */
@@ -2590,8 +2652,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
       popup.print();
     }, 250);
   };
+  openPdfPrintWindowRef.current = openPdfPrintWindow;
 
   useEffect(() => {
+    const syncCompletedMessage = isKorean ? "동기화가 완료되었습니다." : "Sync completed.";
+    const syncFailedMessage = isKorean ? "동기화에 실패했습니다. 다시 시도해 주세요." : "Sync failed. Please try again.";
     const handleManualSync = () => {
       const run = async () => {
         try {
@@ -2603,7 +2668,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               detail: {
                 ok: true,
                 syncedAt: new Date().toISOString(),
-                message: t("Sync completed.", "동기화가 완료되었습니다.")
+                message: syncCompletedMessage
               }
             })
           );
@@ -2612,7 +2677,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
             new CustomEvent("diary:sync-status", {
               detail: {
                 ok: false,
-                message: t("Sync failed. Please try again.", "동기화에 실패했습니다. 다시 시도해 주세요.")
+                message: syncFailedMessage
               }
             })
           );
@@ -2631,14 +2696,14 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     const handleExportPdf = (event: Event) => {
       const custom = event as CustomEvent<{ range?: PdfRange }>;
       const range = custom.detail?.range ?? "day";
-      openPdfPrintWindow(range);
+      openPdfPrintWindowRef.current(range);
     };
 
     window.addEventListener("diary:export-pdf", handleExportPdf);
     return () => {
       window.removeEventListener("diary:export-pdf", handleExportPdf);
     };
-  }, [openPdfPrintWindow]);
+  }, []);
 
   return (
     <main className="flex min-h-screen w-full flex-col pb-16 md:pb-0">
@@ -2979,7 +3044,9 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       key={todo.id}
                       todo={todo}
                       onToggle={() => void toggleTodo(todo)}
+                      onEdit={() => void editTodo(todo)}
                       onDelete={() => void deleteTodo(todo)}
+                      onEditTodoLabel={t("Edit task", "할 일 수정")}
                       onDeleteTodoLabel={t("Delete task", "할 일 삭제")}
                     />
                   ))

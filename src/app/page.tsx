@@ -544,7 +544,7 @@ export default function Home() {
   };
   const isKorean = appLanguage === "ko";
   const appLocale = isKorean ? "ko-KR" : "en-US";
-  const t = (en: string, ko: string) => (isKorean ? ko : en);
+  const t = useCallback((en: string, ko: string) => (isKorean ? ko : en), [isKorean]);
   const biometricSupported = isBiometricAvailable();
   const hasSecurityMethod = lockConfig.useBiometric || lockConfig.usePasscode;
 
@@ -964,7 +964,7 @@ export default function Home() {
     } finally {
       setIsAccountBusy(false);
     }
-  }, [session?.user]);
+  }, [session?.user, t]);
 
   const updatePassword = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1300,7 +1300,7 @@ export default function Home() {
       setPlanError(t("Plan saved on this device. Server sync for account failed.", "현재 기기엔 반영되었지만 계정 동기화에 실패했습니다."));
       return false;
     }
-  }, [isPro, session, settingsPanel, loadAccountSubscription]);
+  }, [accountProvider, isPro, loadAccountSubscription, session, settingsPanel, t]);
 
   const startUnlockCheckout = async () => {
     if (isPro) return;

@@ -122,7 +122,7 @@ export default function PwaManager({ appLanguage: appLanguageProp }: Props) {
     (nextLanguage?: AppLanguage) => {
       setIsKorean(resolveAppLanguage(nextLanguage) === "ko");
     },
-    [appLanguageProp]
+    []
   );
 
   useEffect(() => {

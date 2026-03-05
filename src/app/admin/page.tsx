@@ -58,7 +58,7 @@ export default function AdminPage() {
   const exportRange = useMemo(() => buildExportRange(mode, selectedDate), [mode, selectedDate]);
   const isKorean = appLanguage === "ko";
   const appLocale = isKorean ? "ko-KR" : "en-US";
-  const t = (en: string, ko: string) => (isKorean ? ko : en);
+  const t = useCallback((en: string, ko: string) => (isKorean ? ko : en), [isKorean]);
 
   const rangeLabel = useMemo(() => {
     if (mode === "month") {
@@ -150,7 +150,7 @@ export default function AdminPage() {
         setIsExporting(null);
       }
     },
-    [appLocale, exportRange, refreshAudit, session, t]
+    [exportRange, refreshAudit, session, t]
   );
 
   useEffect(() => {

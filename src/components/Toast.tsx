@@ -55,9 +55,10 @@ export function ToastProvider({ children, appLanguage = "en" }: { children: Reac
   }, []);
 
   useEffect(() => {
+    const timeoutMap = timeoutMapRef.current;
     return () => {
-      timeoutMapRef.current.forEach((timer) => clearTimeout(timer));
-      timeoutMapRef.current.clear();
+      timeoutMap.forEach((timer) => clearTimeout(timer));
+      timeoutMap.clear();
     };
   }, []);
 

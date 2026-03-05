@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { CalendarDays, Search, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -67,19 +67,23 @@ export default function SearchModal({
   onSelectDate
 }: Props) {
   const isKorean = appLanguage === "ko";
-  const t = (en: string, ko: string) => (isKorean ? ko : en);
+  const t = useCallback((en: string, ko: string) => (isKorean ? ko : en), [isKorean]);
   const locale = isKorean ? "ko-KR" : "en-US";
-  const TYPE_LABELS: Record<SearchResult["type"], string> = {
+  const TYPE_LABELS: Record<SearchResult["type"], string> = useMemo(() => ({
     todo: t("Task", "할 일"),
     note: t("Note", "노트"),
     activity: t("Activity", "활동")
-  };
-  const supabaseErrorMessage = t(
-    "Some search sources are unavailable. Results may be partial.",
-    "일부 검색 소스에 접근할 수 없어 결과가 누락될 수 있습니다."
+  }), [t]);
+  const supabaseErrorMessage = useMemo(
+    () =>
+      t(
+        "Some search sources are unavailable. Results may be partial.",
+        "일부 검색 소스에 접근할 수 없어 결과가 누락될 수 있습니다."
+      ),
+    [t]
   );
-  const defaultErrorMessage = t("Search failed. Please retry.", "검색에 실패했습니다. 다시 시도해 주세요.");
-  const getSearchErrorMessage = (error: unknown) => {
+  const defaultErrorMessage = useMemo(() => t("Search failed. Please retry.", "검색에 실패했습니다. 다시 시도해 주세요."), [t]);
+  const getSearchErrorMessage = useCallback((error: unknown) => {
     if (error instanceof Error) {
       const message = error.message.toLowerCase();
       if (message.includes("network") || message.includes("connection")) {
@@ -90,7 +94,7 @@ export default function SearchModal({
       }
     }
     return defaultErrorMessage;
-  };
+  }, [defaultErrorMessage, t]);
 
   const user = session?.user ?? null;
   const [query, setQuery] = useState("");
@@ -277,7 +281,7 @@ export default function SearchModal({
         setIsLoading(false);
       }
     }
-  }, [user, searchSupabase, searchLocal]);
+  }, [getSearchErrorMessage, searchLocal, searchSupabase, supabaseErrorMessage, user]);
 
   const handleChange = (value: string) => {
     setQuery(value);
