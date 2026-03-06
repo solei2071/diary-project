@@ -4,6 +4,42 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Apple, ArrowRight, Chrome, Linkedin, Mail, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
+/** Capacitor iOS 네이티브 환경 여부 감지 */
+const isIosNative = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const cap = (window as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor;
+  return Boolean(cap?.isNativePlatform?.()) && cap?.getPlatform?.() === "ios";
+};
+
+/**
+ * iOS 네이티브에서 Apple Sign In 처리
+ * @capacitor-community/apple-sign-in 플러그인 사용.
+ * 플러그인이 없거나 실패하면 에러를 throw.
+ */
+const signInWithAppleNative = async (): Promise<void> => {
+  // 동적 import — 플러그인 미설치 환경에서도 빌드 오류 없이 처리
+  const { SignInWithApple } = await import("@capacitor-community/apple-sign-in").catch(() => {
+    throw new Error("Apple Sign In plugin is not installed. Run: npm install @capacitor-community/apple-sign-in");
+  });
+
+  const result = await SignInWithApple.authorize({
+    clientId: "com.dailyflow.diary",
+    redirectURI: "https://your-supabase-project.supabase.co/auth/v1/callback",
+    scopes: "email name",
+    state: crypto.randomUUID(),
+    nonce: crypto.randomUUID(),
+  });
+
+  const { identityToken } = result.response;
+  if (!identityToken) throw new Error("Apple Sign In did not return an identity token.");
+
+  const { error } = await supabase.auth.signInWithIdToken({
+    provider: "apple",
+    token: identityToken,
+  });
+  if (error) throw error;
+};
+
 type Props = {
   compact?: boolean;
   mode?: "login" | "signup";
@@ -19,6 +55,23 @@ const socialItems = [
   { key: "linkedin", label: "LinkedIn", provider: "linkedin_oidc",  icon: Linkedin, colorClass: "text-[#0A66C2]" },
  ] as const;
 type SocialProvider = (typeof socialItems)[number]["provider"];
+
+const mapMagicLinkError = (
+  message: string | undefined,
+  t: (en: string, ko: string) => string
+) => {
+  const normalized = (message ?? "").toLowerCase();
+  if (
+    normalized.includes("error sending confirmation email") ||
+    normalized.includes("error sending magic link email")
+  ) {
+    return t(
+      "Email delivery failed on Supabase. Check Supabase Auth > Email (SMTP) settings and sender configuration.",
+      "Supabase에서 메일 발송에 실패했습니다. Supabase Auth > Email(SMTP) 설정과 발신자 구성을 확인해 주세요."
+    );
+  }
+  return message || t("Failed to send link.", "링크 전송에 실패했습니다.");
+};
 
 export default function AuthPanel({
   compact = false,
@@ -73,7 +126,7 @@ export default function AuthPanel({
     });
 
     if (signInError) {
-      setError(signInError.message || t("Failed to send link.", "링크 전송에 실패했습니다."));
+      setError(mapMagicLinkError(signInError.message, t));
     } else {
       setMessage(
         isSignup
@@ -94,18 +147,36 @@ export default function AuthPanel({
     setError(""); setMessage("");
     setSocialLoadingKey(socialKey);
 
-    const redirectTo = `${window.location.origin}/`;
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo },
-    });
+    try {
+      // iOS 네이티브에서 Apple Sign In → 네이티브 플러그인 사용
+      if (provider === "apple" && isIosNative()) {
+        await signInWithAppleNative();
+        // 성공 시 supabase.auth.onAuthStateChange가 세션을 업데이트함
+        setSocialLoadingKey(null);
+        return;
+      }
 
-    if (oauthError) {
-      setSocialLoadingKey(null);
+      // Web 또는 비-Apple: 기존 Supabase OAuth 흐름
+      const redirectTo = `${window.location.origin}/`;
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo },
+      });
+
+      if (oauthError) {
+        setError(
+          oauthError.message ||
+            `${label} ${t("sign-in is not configured yet. Enable it in Supabase → Auth → Providers.", "가 아직 연결되지 않았습니다. Supabase → Auth → Providers에서 설정해 주세요.")}`,
+        );
+      }
+    } catch (err) {
       setError(
-        oauthError.message ||
-          `${label} ${t("sign-in is not configured yet. Enable it in Supabase → Auth → Providers.", "가 아직 연결되지 않았습니다. Supabase → Auth → Providers에서 설정해 주세요.")}`,
+        err instanceof Error
+          ? err.message
+          : `${label} ${t("sign-in failed.", "로그인에 실패했습니다.")}`,
       );
+    } finally {
+      setSocialLoadingKey(null);
     }
   };
 

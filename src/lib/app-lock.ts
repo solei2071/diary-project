@@ -1,5 +1,14 @@
 export const APP_LOCK_STORAGE_KEY = "diary-app-lock-v1";
 
+type FingerprintPlugin = {
+  isAvailable: () => Promise<{ isAvailable?: boolean; errorMessage?: string }>;
+  show: (options: {
+    title: string;
+    description: string;
+    disableBackup: boolean;
+  }) => Promise<unknown>;
+};
+
 export type AppLockConfig = {
   enabled: boolean;
   useBiometric: boolean;
@@ -92,8 +101,39 @@ export const resetAppLockConfig = () => {
 export const shouldRequireAppUnlock = (config: AppLockConfig) =>
   Boolean(config.enabled && (config.usePasscode || config.useBiometric));
 
-export const isBiometricAvailable = () => {
+/** iOS 네이티브 환경 여부 */
+const isIosNative = (): boolean => {
   if (typeof window === "undefined") return false;
+  const cap = (window as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor;
+  return Boolean(cap?.isNativePlatform?.()) && cap?.getPlatform?.() === "ios";
+};
+
+const getNativeFingerprintPlugin = (): FingerprintPlugin | null => {
+  if (typeof window === "undefined") return null;
+  const cap = (window as { Capacitor?: { Plugins?: Record<string, unknown> } }).Capacitor;
+  const plugin = cap?.Plugins?.FingerprintAIO ?? cap?.Plugins?.FingerprintAuth;
+  if (!plugin || typeof plugin !== "object") return null;
+  const maybePlugin = plugin as Partial<FingerprintPlugin>;
+  if (typeof maybePlugin.isAvailable !== "function" || typeof maybePlugin.show !== "function") {
+    return null;
+  }
+  return maybePlugin as FingerprintPlugin;
+};
+
+/**
+ * 생체인증 가용 여부.
+ * - iOS 네이티브: @capacitor-community/fingerprint-auth (Face ID / Touch ID)
+ * - Web: WebAuthn PublicKeyCredential (fingerprint-auth 미설치 환경 fallback)
+ */
+export const isBiometricAvailable = (): boolean => {
+  if (typeof window === "undefined") return false;
+
+  if (isIosNative()) {
+    // 네이티브에서는 항상 true로 반환 — 실제 가용 여부는 registerBiometricCredential 시 판별
+    return true;
+  }
+
+  // Web fallback: WebAuthn
   return Boolean(
     window.isSecureContext &&
       typeof window.PublicKeyCredential !== "undefined" &&
@@ -104,7 +144,37 @@ export const isBiometricAvailable = () => {
   );
 };
 
+/**
+ * 생체인증 등록.
+ * iOS 네이티브: @capacitor-community/fingerprint-auth로 Face ID / Touch ID 등록.
+ * Web: WebAuthn PublicKeyCredential.
+ * 성공 시 credential ID 문자열 반환.
+ */
 export const registerBiometricCredential = async (displayName: string): Promise<string> => {
+  if (isIosNative()) {
+    const fingerprintPlugin = getNativeFingerprintPlugin();
+    if (!fingerprintPlugin) {
+      throw new Error("fingerprint-auth plugin is not installed.");
+    }
+
+    // 가용성 확인
+    const result = await fingerprintPlugin.isAvailable();
+    if (!result.isAvailable) {
+      throw new Error(result.errorMessage ?? "Biometric is not available on this device.");
+    }
+
+    // 등록은 별도 키 없이 시스템 인증으로 처리 — credential ID는 displayName 기반 식별자로 저장
+    await fingerprintPlugin.show({
+      title: "Enable App Lock",
+      description: `Set up biometric unlock for ${displayName}`,
+      disableBackup: false,
+    });
+
+    // 성공하면 고정 ID "native-biometric" 반환 (네이티브는 단일 기기 인증)
+    return "native-biometric";
+  }
+
+  // Web: WebAuthn
   if (!isBiometricAvailable()) {
     throw new Error("Biometric auth is not available.");
   }
@@ -138,7 +208,31 @@ export const registerBiometricCredential = async (displayName: string): Promise<
   return toBase64Url(new Uint8Array(credential.rawId));
 };
 
+/**
+ * 생체인증으로 잠금 해제.
+ * iOS 네이티브: Face ID / Touch ID 시스템 프롬프트.
+ * Web: WebAuthn assertion.
+ */
 export const authenticateWithBiometric = async (credentialId: string): Promise<boolean> => {
+  if (isIosNative()) {
+    try {
+      const fingerprintPlugin = getNativeFingerprintPlugin();
+      if (!fingerprintPlugin) {
+        throw new Error("fingerprint-auth plugin is not installed.");
+      }
+
+      await fingerprintPlugin.show({
+        title: "Unlock Daily Flow Diary",
+        description: "Authenticate to access your diary",
+        disableBackup: false,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Web: WebAuthn
   if (!isBiometricAvailable() || !credentialId) return false;
 
   try {

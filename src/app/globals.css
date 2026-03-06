@@ -14,32 +14,32 @@
 :root {
   /* 배경색 */
   --bg: #ffffff;
-  --bg-secondary: #f7f6f3;
-  --bg-hover: rgba(55, 53, 47, 0.06);
-  --bg-selected: rgba(35, 131, 226, 0.08);
+  --bg-secondary: #f8fafc;
+  --bg-hover: rgba(15, 23, 42, 0.06);
+  --bg-selected: rgba(59, 130, 246, 0.1);
 
   /* Text */
-  --ink: #37352f;
-  --ink-light: #73726e;
-  --muted: #9b9a97;
+  --ink: #0f172a;
+  --ink-light: #475569;
+  --muted: #94a3b8;
 
   /* Border */
-  --border: rgba(55, 53, 47, 0.09);
-  --border-strong: rgba(55, 53, 47, 0.18);
+  --border: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.18);
 
   /* Brand */
-  --primary: #2383e2;
-  --primary-hover: #1a6fc4;
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
   --danger: #e03e3e;
   --danger-bg: #fdecea;
   --success: #16a34a;
   --success-bg: #ecfdf3;
 
   /* Radius */
-  --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
 
   /* Safe area: 노치/홈 인디케이터 등 기기 영역 안전 여백 */
   --safe-top: env(safe-area-inset-top, 0px);
@@ -97,6 +97,7 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
+html[data-font-style="bold"] body,
 html[data-font-style="default"] body {
   font-family: "Inter", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
 }

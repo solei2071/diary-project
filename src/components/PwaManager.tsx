@@ -188,6 +188,32 @@ export default function PwaManager({ appLanguage: appLanguageProp }: Props) {
 
     const register = async () => {
       if (!("serviceWorker" in navigator)) return;
+      const isLocalHost =
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1" ||
+        window.location.hostname === "::1";
+      if (isLocalHost) {
+        try {
+          // 로컬 개발/검증에서는 SW 캐시가 청크 파일을 가로채며
+          // OAuth 리다이렉트 후 앱이 깨지는 사례가 있어 항상 비활성화한다.
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map((registration) => registration.unregister()));
+        } catch {
+          // no-op
+        }
+        return;
+      }
+      if (process.env.NODE_ENV !== "production") {
+        try {
+          // Dev server에서는 SW 캐시가 청크 URL을 오래 잡고 있어
+          // CSS/JS MIME 에러를 유발할 수 있으므로 등록을 해제한다.
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map((registration) => registration.unregister()));
+        } catch {
+          // no-op
+        }
+        return;
+      }
 
       try {
         const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });

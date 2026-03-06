@@ -55,13 +55,19 @@ function toLocalDateString(date: Date): string {
 
 const initialDate = toLocalDateString(new Date());
 const NOTE_CHAR_LIMIT = 2000;
-const TODO_REPEAT_WEEKS = [1, 2, 3, 4, 5];
+const FREE_DAILY_NOTE_LIMIT = 3;
+const PRO_DAILY_NOTE_LIMIT = 10;
+const JOURNAL_NOTES_PREFIX = "journal-notes-v2::";
+const TODO_REPEAT_DEFAULT_PLUS_DAYS = 14;
+const TODO_REPEAT_MAX_PLUS_DAYS = 365;
 const TODO_REPEAT_DAY_LABELS = [
   { value: 1, en: "Mon", ko: "월" },
   { value: 2, en: "Tue", ko: "화" },
   { value: 3, en: "Wed", ko: "수" },
   { value: 4, en: "Thu", ko: "목" },
-  { value: 5, en: "Fri", ko: "금" }
+  { value: 5, en: "Fri", ko: "금" },
+  { value: 6, en: "Sat", ko: "토" },
+  { value: 0, en: "Sun", ko: "일" }
 ];
 type AppLanguage = "en" | "ko";
 const APP_LANGUAGE_STORAGE_KEY = "diary-language";
@@ -155,6 +161,43 @@ const getSafeSupabaseError = (message?: string | null, appLanguage?: AppLanguage
 
 const shouldIgnoreSupabaseSchemaError = (message?: string | null) => {
   return getSafeSupabaseError(message) === "";
+};
+
+const splitMemoLines = (value: string) =>
+  value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+const normalizeJournalNotes = (notes: string[]) => {
+  return notes
+    .map((item) => item.replace(/\r\n/g, "\n").trim())
+    .filter(Boolean);
+};
+
+const parseJournalNotes = (value?: string | null) => {
+  const raw = (value ?? "").trim();
+  if (!raw) return [];
+
+  if (raw.startsWith(JOURNAL_NOTES_PREFIX)) {
+    try {
+      const parsed = JSON.parse(raw.slice(JOURNAL_NOTES_PREFIX.length));
+      if (Array.isArray(parsed)) {
+        return normalizeJournalNotes(parsed.filter((item): item is string => typeof item === "string"));
+      }
+    } catch {
+      // fall through to legacy parser
+    }
+  }
+
+  // Legacy plain-text notes: one non-empty line = one note.
+  return normalizeJournalNotes(splitMemoLines(raw));
+};
+
+const serializeJournalNotes = (notes: string[]) => {
+  const normalized = normalizeJournalNotes(notes);
+  if (!normalized.length) return "";
+  return `${JOURNAL_NOTES_PREFIX}${JSON.stringify(normalized)}`;
 };
 
 /** 날짜 문자열을 읽기 쉬운 형식으로 변환 (예: 2/17 (Mon)) */
@@ -596,11 +639,13 @@ export default function DailyDiary({
   const [isActivityDirty, setIsActivityDirty] = useState(false);
   const [isSavingActivity, setIsSavingActivity] = useState(false);
   const [journalText, setJournalText] = useState("");
+  const [journalNotes, setJournalNotes] = useState<string[]>([]);
   const [todoError, setTodoError] = useState("");
   const [journalError, setJournalError] = useState("");
   const [activityError, setActivityError] = useState("");
   const [isAddingTodo, setIsAddingTodo] = useState(false);
   const [newTodoTitle, setNewTodoTitle] = useState("");
+  const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [draftTodosByDate, setDraftTodosByDate] = useState<Record<string, UiTodo[]>>(() => {
     try {
       const raw = typeof window !== "undefined" ? localStorage.getItem("diary-draft-todos") : null;
@@ -626,21 +671,21 @@ export default function DailyDiary({
   const [journalUpdatedAt, setJournalUpdatedAt] = useState<string | null>(null);
   const [todoUpdatedAt, setTodoUpdatedAt] = useState<string | null>(null);
   const [activityUpdatedAt, setActivityUpdatedAt] = useState<string | null>(null);
-  const [activeDiaryTab, setActiveDiaryTab] = useState<DiaryTab>("activity");
+  const [activeDiaryTab, setActiveDiaryTab] = useState<DiaryTab>("dashboard");
   const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
   const [customEmoji, setCustomEmoji] = useState("");
   const [customHours, setCustomHours] = useState("");
   const [customStartTime, setCustomStartTime] = useState("");
   const [activityLabelEditingByDate, setActivityLabelEditingByDate] = useState<Record<string, boolean>>({});
   const [todoRepeatDays, setTodoRepeatDays] = useState<number[]>([]);
-  const [todoRepeatWeeks, setTodoRepeatWeeks] = useState<number>(TODO_REPEAT_WEEKS[1] ?? 1);
+  const [todoRepeatPlusDays, setTodoRepeatPlusDays] = useState<number>(TODO_REPEAT_DEFAULT_PLUS_DAYS);
   const [isTodoRepeatSettingsOpen, setIsTodoRepeatSettingsOpen] = useState(false);
   const [activityConflictWarnings, setActivityConflictWarnings] = useState<Record<string, string>>({});
   const diaryTabs: { id: DiaryTab; label: string; icon: typeof ListTodo; compactLabel?: string }[] = [
+    { id: "dashboard", label: t("Dashboard", "대시보드"), compactLabel: t("dash", "대시"), icon: LayoutDashboard },
     { id: "activity", label: t("Activity", "활동"), compactLabel: t("activity", "활동"), icon: Clock3 },
     { id: "notes", label: t("Notes", "노트"), icon: FileText },
-    { id: "todo", label: t("To-do", "할 일"), icon: ListTodo },
-    { id: "dashboard", label: t("Dashboard", "대시보드"), compactLabel: t("dash", "대시"), icon: LayoutDashboard }
+    { id: "todo", label: t("To-do", "할 일"), icon: ListTodo }
   ];
   const activityListRef = useRef<HTMLDivElement | null>(null);
   const activityTrashRef = useRef<HTMLDivElement | null>(null);
@@ -650,7 +695,6 @@ export default function DailyDiary({
   const activitySwipeStartRef = useRef<{ emoji: string; x: number; y: number } | null>(null);
   const activitySwipeLockRef = useRef<"h" | "v" | null>(null);
   const todoInputRef = useRef<HTMLInputElement | null>(null);
-  const journalDraftDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activityContextMenu, setActivityContextMenu] = useState<{
     x: number;
     y: number;
@@ -695,6 +739,7 @@ export default function DailyDiary({
   const currentMonth = selectedDate.slice(0, 7);
   const today = toLocalDateString(new Date());
   const symbolPlan = symbolPlanOverride ?? "free";
+  const dailyNoteLimit = symbolPlan === "pro" ? PRO_DAILY_NOTE_LIMIT : FREE_DAILY_NOTE_LIMIT;
   const planLimits = useMemo(
     () => planFeaturesOverride ?? getPlanLimits(symbolPlan),
     [symbolPlan, planFeaturesOverride]
@@ -713,7 +758,7 @@ export default function DailyDiary({
   const canTodoRepeat = planLimits.canTodoRepeat;
   const appLocale = getLocale(isKorean);
   const weekdayLabels = getWeekdayLabels(isKorean);
-  const diaryTabOrder: DiaryTab[] = ["activity", "notes", "todo", "dashboard"];
+  const diaryTabOrder: DiaryTab[] = ["dashboard", "activity", "notes", "todo"];
   const [tabSwipeOffset, setTabSwipeOffset] = useState(0);
   const tabSwipeStartRef = useRef<{
     startX: number;
@@ -721,7 +766,7 @@ export default function DailyDiary({
     lastX: number;
     isHorizontalSwipe: boolean;
   } | null>(null);
-  const openPdfPrintWindowRef = useRef<(range: PdfRange) => void>(() => {});
+  const openPdfPrintWindowRef = useRef<(range: PdfRange, providedPopup?: Window | null) => void>(() => {});
   const isTabSwipeTarget = (target: EventTarget | null) => {
     const el = target as HTMLElement | null;
     if (!el) return false;
@@ -954,27 +999,24 @@ export default function DailyDiary({
     return end ? `${start} - ${end}` : start;
   };
 
-  const buildTodoRepeatDates = (baseDate: string, repeatDays: number[], repeatWeekCount: number) => {
+  const buildTodoRepeatDates = (baseDate: string, repeatDays: number[], repeatPlusDays: number) => {
     if (!baseDate || !repeatDays.length) {
       return [baseDate];
     }
 
     const base = new Date(`${baseDate}T00:00:00`);
-    const baseWeekday = base.getDay();
-    const weekCount = TODO_REPEAT_WEEKS.includes(repeatWeekCount) ? repeatWeekCount : TODO_REPEAT_WEEKS[1] ?? 1;
-    const days = [...new Set(repeatDays.filter((value) => value >= 0 && value <= 6))].sort((a, b) => a - b);
+    const days = [...new Set(repeatDays.filter((value) => value >= 0 && value <= 6))];
+    const normalizedPlusDays = Number.isFinite(repeatPlusDays)
+      ? Math.min(TODO_REPEAT_MAX_PLUS_DAYS, Math.max(0, Math.round(repeatPlusDays)))
+      : TODO_REPEAT_DEFAULT_PLUS_DAYS;
     const generated = new Set<string>();
 
-    for (let weekOffset = 0; weekOffset < weekCount; weekOffset += 1) {
-      days.forEach((targetWeekday) => {
-        const dayOffset = targetWeekday - baseWeekday + weekOffset * 7;
-        if (weekOffset === 0 && dayOffset < 0) {
-          return;
-        }
-        const date = new Date(base);
-        date.setDate(base.getDate() + dayOffset);
+    for (let dayOffset = 0; dayOffset <= normalizedPlusDays; dayOffset += 1) {
+      const date = new Date(base);
+      date.setDate(base.getDate() + dayOffset);
+      if (days.includes(date.getDay())) {
         generated.add(toLocalDateString(date));
-      });
+      }
     }
 
     const nextDates = Array.from(generated).sort();
@@ -1292,12 +1334,6 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       .join(" ");
   };
 
-  const splitMemoLines = (value: string) =>
-    value
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
   const loadDataRef = useRef<(targetDate: string) => Promise<void>>(async () => {});
   const loadMonthFlowRef = useRef<(targetDate: string) => Promise<void>>(async () => {});
 
@@ -1349,7 +1385,8 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       const seededActivities = draftActivitiesByDate[targetDate];
 
       setTodos(sortTodosForDisplay(seededTodos ?? []));
-      setJournalText(seededJournal ?? "");
+      setJournalNotes(parseJournalNotes(seededJournal ?? ""));
+      setJournalText("");
       if (seededActivities?.length) {
         setActivities(
           seededActivities
@@ -1416,16 +1453,20 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     if (journalResponse.error) {
       setJournalError(getSafeSupabaseError(journalResponse.error.message));
       if (!shouldIgnoreSupabaseSchemaError(journalResponse.error.message)) {
-        setJournalText(localDraftJournal);
+        setJournalNotes(parseJournalNotes(localDraftJournal));
+        setJournalText("");
       }
       setJournalUpdatedAt(null);
     } else if (journalResponse.data) {
       setJournalUpdatedAt((journalResponse.data as JournalRow).updated_at ?? null);
       const remoteContent = (journalResponse.data as JournalRow).content ?? "";
-      setJournalText(localDraftJournal ? localDraftJournal : remoteContent);
+      const resolvedContent = localDraftJournal ? localDraftJournal : remoteContent;
+      setJournalNotes(parseJournalNotes(resolvedContent));
+      setJournalText("");
     } else {
       setJournalUpdatedAt(null);
-      setJournalText(localDraftJournal);
+      setJournalNotes(parseJournalNotes(localDraftJournal));
+      setJournalText("");
     }
 
     if (activityResponse.error) {
@@ -1619,9 +1660,9 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     });
   };
 
-  const updateDraftJournal = useCallback((text: string) => {
+  const updateDraftJournal = useCallback((content: string) => {
     setDraftJournalByDate((prev) => {
-      const next = { ...prev, [selectedDate]: text };
+      const next = { ...prev, [selectedDate]: content };
       try {
         localStorage.setItem("diary-draft-journal", JSON.stringify(next));
       } catch (err) {
@@ -1766,57 +1807,18 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setIsTodoDirty(false);
   };
 
-  /** 할 일 제목 수정 */
-  const editTodo = async (todo: UiTodo) => {
-    if (typeof window === "undefined") return;
-    const nextInput = window.prompt(t("Edit task", "할 일 수정"), todo.title);
-    if (nextInput === null) return;
-
-    const nextTitle = nextInput.trim();
-    if (!nextTitle) {
-      setTodoError(t("Please enter a task.", "할 일을 입력해 주세요."));
-      return;
-    }
-    if (nextTitle === todo.title) return;
-
+  /** 할 일 제목 수정 시작 (상단 입력창에서 편집) */
+  const editTodo = (todo: UiTodo) => {
     setTodoError("");
-    const prev = [...todos];
-    const updated = sortTodosForDisplay(
-      todos.map((item) => (item.id === todo.id ? { ...item, title: nextTitle } : item))
-    );
-    setTodos(updated);
-    setIsTodoDirty(true);
-
-    if (await hasSyncConflictForSave("todo", selectedDate)) {
-      setTodos(sortTodosForDisplay(prev));
-      setIsTodoDirty(false);
-      return;
-    }
-
-    if (!user) {
-      updateDraftTodo(updated);
-      setIsTodoDirty(false);
-      showToast(t("Task updated", "할 일이 수정되었습니다"), "success");
-      return;
-    }
-
-    const { error } = await supabase
-      .from("todos")
-      .update({ title: nextTitle })
-      .eq("id", todo.id)
-      .eq("user_id", user.id);
-
-    if (error) {
-      if (!shouldIgnoreSupabaseSchemaError(error.message)) {
-        setTodos(sortTodosForDisplay(prev));
-      }
-      setTodoError(getSafeSupabaseError(error.message));
-      setIsTodoDirty(false);
-      return;
-    }
-
-    setIsTodoDirty(false);
-    showToast(t("Task updated", "할 일이 수정되었습니다"), "success");
+    setIsAddingTodo(true);
+    setIsTodoRepeatSettingsOpen(false);
+    setEditingTodoId(todo.id);
+    setNewTodoTitle(todo.title);
+    setTimeout(() => {
+      const input = todoInputRef.current;
+      input?.focus();
+      input?.setSelectionRange(0, input.value.length);
+    }, 0);
   };
 
 /** 할 일 삭제 (Optimistic UI + Undo 지원) */
@@ -1881,10 +1883,74 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       return;
     }
     setTodoError("");
-    const normalizedRepeatWeeks = TODO_REPEAT_WEEKS.includes(todoRepeatWeeks) ? todoRepeatWeeks : TODO_REPEAT_WEEKS[1] ?? 1;
+
+    if (editingTodoId) {
+      const targetTodo = todos.find((item) => item.id === editingTodoId);
+      if (!targetTodo) {
+        setEditingTodoId(null);
+        setIsAddingTodo(false);
+        setNewTodoTitle("");
+        return;
+      }
+
+      if (title === targetTodo.title) {
+        setEditingTodoId(null);
+        setIsAddingTodo(false);
+        setIsTodoRepeatSettingsOpen(false);
+        setNewTodoTitle("");
+        return;
+      }
+
+      const prev = [...todos];
+      const updated = sortTodosForDisplay(
+        todos.map((item) => (item.id === targetTodo.id ? { ...item, title } : item))
+      );
+      setTodos(updated);
+      setIsAddingTodo(false);
+      setIsTodoRepeatSettingsOpen(false);
+      setEditingTodoId(null);
+      setNewTodoTitle("");
+      setIsTodoDirty(true);
+
+      if (await hasSyncConflictForSave("todo", selectedDate)) {
+        setTodos(sortTodosForDisplay(prev));
+        setIsTodoDirty(false);
+        return;
+      }
+
+      if (!user) {
+        updateDraftTodo(updated);
+        setIsTodoDirty(false);
+        showToast(t("Task updated", "할 일이 수정되었습니다"), "success");
+        return;
+      }
+
+      const { error } = await supabase
+        .from("todos")
+        .update({ title })
+        .eq("id", targetTodo.id)
+        .eq("user_id", user.id);
+
+      if (error) {
+        if (!shouldIgnoreSupabaseSchemaError(error.message)) {
+          setTodos(sortTodosForDisplay(prev));
+        }
+        setTodoError(getSafeSupabaseError(error.message));
+        setIsTodoDirty(false);
+        return;
+      }
+
+      setIsTodoDirty(false);
+      showToast(t("Task updated", "할 일이 수정되었습니다"), "success");
+      return;
+    }
+
+    const normalizedRepeatPlusDays = Number.isFinite(todoRepeatPlusDays)
+      ? Math.min(TODO_REPEAT_MAX_PLUS_DAYS, Math.max(0, Math.round(todoRepeatPlusDays)))
+      : TODO_REPEAT_DEFAULT_PLUS_DAYS;
     const repeatDays = canTodoRepeat ? todoRepeatDays : [];
     const repeatDates = repeatDays.length > 0
-      ? buildTodoRepeatDates(selectedDate, repeatDays, normalizedRepeatWeeks)
+      ? buildTodoRepeatDates(selectedDate, repeatDays, normalizedRepeatPlusDays)
       : [selectedDate];
 
     const currentSelectedTasks = sortTodosForDisplay(todos);
@@ -1901,6 +1967,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setNewTodoTitle("");
     setIsAddingTodo(false);
     setIsTodoRepeatSettingsOpen(false);
+    setEditingTodoId(null);
     setIsTodoDirty(true);
     showToast(t("Task added", "할 일이 추가되었습니다"), "success");
 
@@ -2435,12 +2502,73 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   const handleJournalChange = (value: string) => {
     const next = value.slice(0, NOTE_CHAR_LIMIT);
     setJournalText(next);
+    if (journalError) {
+      setJournalError("");
+    }
+  };
+
+  const saveJournalNote = async () => {
+    const nextNote = journalText.trim();
+    if (!nextNote) {
+      setJournalError(t("Please write a note first.", "먼저 노트를 입력해 주세요."));
+      return;
+    }
+
+    if (journalNotes.length >= dailyNoteLimit) {
+      setJournalError(
+        dailyNoteLimit === PRO_DAILY_NOTE_LIMIT
+          ? t("You can save up to 10 notes per day on Pro.", "Pro 요금제는 하루 최대 10개 노트까지 저장할 수 있습니다.")
+          : t("Free plan allows up to 3 notes per day. Upgrade to Pro for up to 10 notes.", "무료 플랜은 하루 최대 3개 노트까지 저장할 수 있습니다. Pro로 업그레이드하면 최대 10개까지 저장할 수 있습니다.")
+      );
+      return;
+    }
+
+    const normalizedNote = nextNote.slice(0, NOTE_CHAR_LIMIT);
+    const nextNotes = normalizeJournalNotes([...journalNotes, normalizedNote]);
+    const serialized = serializeJournalNotes(nextNotes);
+
+    setJournalError("");
     setIsJournalDirty(true);
-    if (journalDraftDebounceRef.current) clearTimeout(journalDraftDebounceRef.current);
-    journalDraftDebounceRef.current = setTimeout(() => {
-      updateDraftJournal(next);
+
+    if (await hasSyncConflictForSave("journal", selectedDate)) {
       setIsJournalDirty(false);
-    }, 500);
+      return;
+    }
+
+    if (!user) {
+      updateDraftJournal(serialized);
+      setMonthJournalByDate((prev) => ({ ...prev, [selectedDate]: serialized }));
+      setJournalNotes(nextNotes);
+      setJournalText("");
+      setIsJournalDirty(false);
+      showToast(t("Note saved", "노트를 저장했습니다."), "success");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("journal_entries")
+      .upsert(
+        {
+          user_id: user.id,
+          entry_date: selectedDate,
+          content: serialized
+        },
+        { onConflict: "user_id,entry_date" }
+      );
+
+    if (error) {
+      setJournalError(getSafeSupabaseError(error.message));
+      setIsJournalDirty(false);
+      return;
+    }
+
+    updateDraftJournal(serialized);
+    setJournalNotes(nextNotes);
+    setJournalText("");
+    setIsJournalDirty(false);
+    showToast(t("Note saved", "노트를 저장했습니다."), "success");
+    await loadData(selectedDate);
+    await loadMonthFlow(selectedDate);
   };
 
   // 날짜 전환 시 편집 상태 초기화 (이전 날짜의 편집 모드가 새 날짜에 남지 않도록)
@@ -2490,6 +2618,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   const syncConflictMessage = syncConflict
     ? buildSyncConflictMessage(syncConflict.scope, prettyDateLabel(syncConflict.date, appLocale), isKorean)
     : null;
+  const isTodoEditing = editingTodoId !== null;
   const todoRepeatSummary = !canTodoRepeat
     ? t("Pro only", "Pro 전용")
     : todoRepeatDays.length === 0
@@ -2497,7 +2626,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
       : `${TODO_REPEAT_DAY_LABELS
           .filter((entry) => todoRepeatDays.includes(entry.value))
           .map((entry) => (isKorean ? entry.ko : entry.en))
-          .join(", ")} · ${todoRepeatWeeks}${t("w", "주")}`;
+          .join(", ")} · +${todoRepeatPlusDays}${t(" days", "일")}`;
 
   const buildPdfTitle = (range: PdfRange) => {
     if (range === "day") return t("Daily Report", "일간 리포트");
@@ -2529,8 +2658,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           : (monthActivitiesByDate[day] ?? []);
       const dayNotes =
         range === "day"
-          ? splitMemoLines(journalText)
-          : splitMemoLines(monthJournalByDate[day] ?? "");
+          ? journalNotes
+          : parseJournalNotes(monthJournalByDate[day] ?? "");
 
       return {
         day,
@@ -2544,7 +2673,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     });
   };
 
-  const openPdfPrintWindow = (range: PdfRange) => {
+  const openPdfPrintWindow = (range: PdfRange, providedPopup?: Window | null) => {
     if (typeof window === "undefined") return;
     const rows = toPdfRows(range);
     const totalHours = rows.reduce(
@@ -2639,18 +2768,33 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
       </html>
     `;
 
-    const popup = window.open("", "_blank", "noopener,noreferrer,width=980,height=900");
+    const popup = providedPopup && !providedPopup.closed
+      ? providedPopup
+      : window.open("about:blank", "_blank", "width=980,height=900");
     if (!popup) {
       showToast(t("Popup blocked — allow popups to export PDF.", "팝업 차단 — PDF 내보내기를 위해 팝업 허용이 필요합니다."), "error");
       return;
     }
-    popup.document.open();
-    popup.document.write(html);
-    popup.document.close();
-    popup.focus();
-    window.setTimeout(() => {
-      popup.print();
-    }, 250);
+    try {
+      popup.document.open();
+      popup.document.write(html);
+      popup.document.close();
+      popup.focus();
+      window.setTimeout(() => {
+        try {
+          popup.print();
+        } catch {
+          showToast(t("Failed to open print dialog.", "인쇄 창을 열지 못했습니다."), "error");
+        }
+      }, 250);
+    } catch {
+      showToast(t("Failed to export PDF.", "PDF 내보내기에 실패했습니다."), "error");
+      try {
+        popup.close();
+      } catch {
+        // no-op
+      }
+    }
   };
   openPdfPrintWindowRef.current = openPdfPrintWindow;
 
@@ -2694,9 +2838,10 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
   useEffect(() => {
     const handleExportPdf = (event: Event) => {
-      const custom = event as CustomEvent<{ range?: PdfRange }>;
+      const custom = event as CustomEvent<{ range?: PdfRange; popup?: Window | null }>;
       const range = custom.detail?.range ?? "day";
-      openPdfPrintWindowRef.current(range);
+      const popup = custom.detail?.popup;
+      openPdfPrintWindowRef.current(range, popup);
     };
 
     window.addEventListener("diary:export-pdf", handleExportPdf);
@@ -2706,11 +2851,32 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   }, []);
 
   return (
-    <main className="flex min-h-screen w-full flex-col pb-16 md:pb-0">
-      <div className="mx-auto mt-4 w-full max-w-5xl px-4 sm:mt-5">
-        <h2 className="text-base font-bold text-[var(--ink)]">
-          {prettyDateLabel(selectedDate, appLocale)}
-        </h2>
+    <main
+      className="flex min-h-screen w-full flex-col pb-20 md:pb-0"
+      style={{ background: "linear-gradient(to bottom, var(--bg-secondary), var(--bg))" }}
+    >
+      <div className="mx-auto mt-4 w-full max-w-[430px] px-4 sm:mt-5 lg:max-w-5xl">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedDate((prev) => shiftDateByDays(prev, -1))}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
+            aria-label={t("Previous day", "이전 날짜")}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <h2 className="text-center text-3xl font-semibold tracking-tight text-[var(--ink)]">
+            {prettyDateLabel(selectedDate, appLocale)}
+          </h2>
+          <button
+            type="button"
+            onClick={() => setSelectedDate((prev) => shiftDateByDays(prev, 1))}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
+            aria-label={t("Next day", "다음 날짜")}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
       </div>
       {syncConflictMessage ? (
         <div className="mx-auto mt-3 w-full max-w-5xl px-4">
@@ -2729,13 +2895,13 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
       ) : null}
 
         {/* ── Main Layout: Sidebar + Content ── */}
-      <div className="flex flex-1 flex-col gap-8 pt-4 lg:flex-row lg:items-start">
+      <div className="flex flex-1 flex-col gap-4 pt-4 lg:flex-row lg:items-start">
 
         {/* ── Left Sidebar: Calendar + Monthly Flow ── */}
-        {activeDiaryTab !== "dashboard" ? (
+        {activeDiaryTab === "dashboard" ? (
           <aside className="w-full shrink-0 lg:sticky lg:top-6 lg:w-60">
           {/* Activity summary (read-only) */}
-          <div className="fade-up rounded-lg border border-[var(--border)] p-3">
+          <div className="fade-up rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-3 shadow-sm">
             <p className="mb-1 text-xs leading-5 font-medium text-[var(--ink)]">{t("Today's activity summary", "오늘의 활동 요약")}</p>
             {activities.length === 0 ? (
               <p className="break-words text-xs leading-5 text-[var(--ink)]">{t("No records yet", "아직 기록이 없습니다.")}</p>
@@ -2763,22 +2929,22 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           </div>
 
           {/* Notes card */}
-          <div className="fade-up rounded-lg border border-[var(--border)] p-3">
+          <div className="fade-up rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-3 shadow-sm">
             <p className="mb-1 text-xs leading-5 font-medium text-[var(--ink)]">{t("Notes", "노트")}</p>
-            {splitMemoLines(journalText).length === 0 ? (
+            {journalNotes.length === 0 ? (
               <p className="break-words text-[11px] leading-5 text-[var(--ink)]">{t("No notes yet.", "아직 노트가 없습니다.")}</p>
             ) : (
               <div className="grid gap-1">
-                {splitMemoLines(journalText).slice(0, 3).map((line, index) => (
+                {journalNotes.slice(0, 3).map((line, index) => (
                   <p key={`journal-${line}-${index}`} className="break-words text-[11px] leading-5 text-[var(--ink)]">{`- ${line}`}</p>
                 ))}
-                {splitMemoLines(journalText).length > 3 ? <p className="text-[11px] leading-5 text-[var(--muted)]">...</p> : null}
+                {journalNotes.length > 3 ? <p className="text-[11px] leading-5 text-[var(--muted)]">...</p> : null}
               </div>
             )}
           </div>
 
           {/* Calendar */}
-          <div className="fade-up rounded-lg border border-[var(--border)] px-2 py-3">
+          <div className="fade-up rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-2 py-3 shadow-sm">
             {/* Month navigation */}
             <div className="mb-2 flex items-center justify-between">
               <button
@@ -2847,7 +3013,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
           {/* ── Right Main Content ── */}
         <div
-          className="min-w-0 flex-1 space-y-8"
+          className="min-w-0 flex-1 space-y-4"
           onTouchStart={handleTabSwipeStart}
           onTouchMove={handleTabSwipeMove}
           onTouchEnd={handleTabSwipeEnd}
@@ -2886,15 +3052,15 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 </div>
               </div>
             ) : null}
-            <div className="hidden md:inline-flex overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]">
+            <div className="hidden md:inline-flex overflow-hidden rounded-full border border-[var(--border)] bg-[var(--bg)] p-1 shadow-sm backdrop-blur">
               {diaryTabs.map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveDiaryTab(tab.id)}
-                  className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                  className={`rounded-full px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
                     activeDiaryTab === tab.id
-                      ? "bg-[var(--bg-hover)] text-[var(--ink)]"
+                      ? "bg-[var(--primary)] text-white"
                       : "text-[var(--muted)] hover:bg-[var(--bg-hover)]"
                   }`}
                 >
@@ -2906,18 +3072,24 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
           {/* ── To-do ── */}
           {activeDiaryTab === "todo" ? (
-          <section className="fade-up overflow-visible rounded-lg border border-[var(--border)]">
+          <section className="fade-up overflow-visible rounded-2xl border border-[var(--border)] bg-[var(--bg)] shadow-sm">
             <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
               <span className="n-h2">{t("To-do", "할 일")}</span>
               <button
                 onClick={() => {
-                  setIsAddingTodo((prev) => {
-                    const next = !prev;
-                    if (!next) {
-                      setIsTodoRepeatSettingsOpen(false);
+                  if (isAddingTodo) {
+                    setIsAddingTodo(false);
+                    setIsTodoRepeatSettingsOpen(false);
+                    if (editingTodoId) {
+                      setEditingTodoId(null);
+                      setNewTodoTitle("");
                     }
-                    return next;
-                  });
+                    return;
+                  }
+
+                  setEditingTodoId(null);
+                  setIsAddingTodo(true);
+                  setTimeout(() => todoInputRef.current?.focus(), 0);
                 }}
                 className="ml-auto n-btn-ghost px-2 py-1 text-sm"
                   aria-label={t("Add to-do", "할 일 추가")}
@@ -2953,41 +3125,44 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                         void addTodo();
                       }}
                       className="n-input flex-1"
-                      placeholder={t("Add a task", "할 일을 입력하세요")}
+                      placeholder={isTodoEditing ? t("Edit task", "할 일 수정") : t("Add a task", "할 일을 입력하세요")}
                       aria-label={t("Todo input", "할 일 입력")}
                     />
-                    <button
-                      type="button"
-                      onClick={() => setIsTodoRepeatSettingsOpen((prev) => !prev)}
-                      className={`inline-flex h-10 shrink-0 items-center gap-1 rounded-md border px-2 ${
-                        isTodoRepeatSettingsOpen
-                          ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
-                          : "border-[var(--border)] text-[var(--muted)]"
-                      }`}
-                      aria-label={t("Open repeat settings", "반복 설정 열기")}
-                      title={t("Repeat settings", "반복 설정")}
-                    >
-                      <Settings className="h-4 w-4" />
-                      <span className="text-[11px] font-semibold">{t("Repeat", "반복")}</span>
-                      <span className="text-[10px] opacity-80">{todoRepeatSummary}</span>
-                    </button>
+                    {!isTodoEditing ? (
+                      <button
+                        type="button"
+                        onClick={() => setIsTodoRepeatSettingsOpen((prev) => !prev)}
+                        className={`inline-flex h-10 shrink-0 items-center gap-1 rounded-md border px-2 ${
+                          isTodoRepeatSettingsOpen
+                            ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
+                            : "border-[var(--border)] text-[var(--muted)]"
+                        }`}
+                        aria-label={t("Open repeat settings", "반복 설정 열기")}
+                        title={t("Repeat settings", "반복 설정")}
+                      >
+                        <Settings className="h-4 w-4" />
+                        <span className="text-[11px] font-semibold">{t("Repeat", "반복")}</span>
+                        <span className="text-[10px] opacity-80">{todoRepeatSummary}</span>
+                      </button>
+                    ) : null}
                     <button onClick={() => void addTodo()} className="n-btn-primary shrink-0">
-                      {t("Add", "추가")}
+                      {isTodoEditing ? t("Save", "저장") : t("Add", "추가")}
                     </button>
                     <button
                       onClick={() => {
                         setIsAddingTodo(false);
                         setIsTodoRepeatSettingsOpen(false);
                         setNewTodoTitle("");
+                        setEditingTodoId(null);
                         setTodoRepeatDays([]);
-                        setTodoRepeatWeeks(TODO_REPEAT_WEEKS[1] ?? 1);
+                        setTodoRepeatPlusDays(TODO_REPEAT_DEFAULT_PLUS_DAYS);
                       }}
                       className="n-btn-ghost shrink-0"
                     >
                       {t("Cancel", "취소")}
                     </button>
                   </div>
-                  {isTodoRepeatSettingsOpen ? (
+                  {isTodoRepeatSettingsOpen && !isTodoEditing ? (
                     <div className="mt-2 rounded-lg border border-[var(--border)] p-2">
                     <p className="mb-1.5 text-xs text-[var(--muted)]">{t("Repeat on", "반복 요일")}</p>
                     <div className="flex flex-wrap gap-1.5">
@@ -3010,19 +3185,26 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       })}
                     </div>
                     <div className="mt-2 flex items-center gap-2">
-                      <span className="text-xs text-[var(--muted)]">{t("for next", "다음")}</span>
-                      <select
-                        value={todoRepeatWeeks}
-                        onChange={(event) => setTodoRepeatWeeks(Number(event.target.value))}
+                      <span className="text-xs text-[var(--muted)]">+</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={TODO_REPEAT_MAX_PLUS_DAYS}
+                        step={1}
+                        value={todoRepeatPlusDays}
+                        onChange={(event) => {
+                          const nextValue = Number(event.target.value);
+                          if (!Number.isFinite(nextValue)) {
+                            setTodoRepeatPlusDays(0);
+                            return;
+                          }
+                          setTodoRepeatPlusDays(Math.min(TODO_REPEAT_MAX_PLUS_DAYS, Math.max(0, Math.round(nextValue))));
+                        }}
                         disabled={!canTodoRepeat}
-                        className="n-input h-7 w-16 px-2 py-1 text-xs"
-                      >
-                        {TODO_REPEAT_WEEKS.map((week) => (
-                          <option key={week} value={week}>
-                            {week}{t(" weeks", "주")}
-                          </option>
-                        ))}
-                      </select>
+                        className="n-input h-7 w-20 px-2 py-1 text-xs"
+                        aria-label={t("Repeat plus days", "반복 추가 일수")}
+                      />
+                      <span className="text-xs text-[var(--muted)]">{t("days", "일")}</span>
                     </div>
                     {!canTodoRepeat ? (
                       <p className="mt-1 text-xs text-[var(--muted)]">{t("Repeat scheduling is available on Pro.", "반복 설정은 Pro에서 이용 가능합니다.")}</p>
@@ -3057,7 +3239,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
           {/* ── Activity Log ── */}
         {activeDiaryTab === "activity" ? (
-          <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
+          <section className="fade-up overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)] shadow-sm">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-3">
         <span className="n-h2">{t("Activity", "활동")}</span>
         {isSavingActivity && (
@@ -3408,9 +3590,22 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
           {/* ── Notes ── */}
           {activeDiaryTab === "notes" ? (
-          <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
+          <section className="fade-up overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)] shadow-sm">
               <div className="flex items-center border-b border-[var(--border)] px-3 py-3">
                 <span className="n-h2">{t("Notes", "노트")}</span>
+                <span className="ml-2 text-[11px] text-[var(--muted)]">{`${journalNotes.length}/${dailyNoteLimit}`}</span>
+                <button
+                  type="button"
+                  onClick={() => void saveJournalNote()}
+                  disabled={!journalText.trim() || journalNotes.length >= dailyNoteLimit}
+                  className="ml-auto inline-flex h-8 min-w-[4.25rem] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg)] px-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm transition hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-45"
+                  aria-label={t("Save note", "노트 저장")}
+                >
+                  <kbd className="inline-flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none text-[var(--ink)]">
+                    <span aria-hidden="true">⏎</span>
+                    <span>{t("Enter", "엔터")}</span>
+                  </kbd>
+                </button>
               </div>
               {journalError && <p className="px-3 py-2 text-xs text-[var(--danger)]">{journalError}</p>}
               <div className="divide-y divide-[var(--border)]">
@@ -3418,16 +3613,31 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <textarea
                     value={journalText}
                     onChange={(e) => handleJournalChange(e.target.value)}
+                    onKeyDown={(event) => {
+                      if (!(event.metaKey || event.ctrlKey) || event.key !== "Enter") return;
+                      event.preventDefault();
+                      void saveJournalNote();
+                    }}
                     rows={8}
                     className="n-textarea"
-                    placeholder={t("Write your tasks, notes, and reflection freely...", "작업, 노트, 회고를 자유롭게 기록해 주세요")}
+                    placeholder={t("Write a note for today and tap Enter to save...", "오늘의 노트를 입력하고 Enter 버튼으로 저장해 주세요")}
                   />
                   <p className="mt-1 text-right text-xs text-[var(--muted)]">
                     {`${journalText.length}/${NOTE_CHAR_LIMIT}`}
                   </p>
                 </div>
                 <div className="px-3 py-3">
-                  <p className="text-xs text-[var(--muted)]">{t("Auto-saved locally", "로컬에 자동 저장됨")}</p>
+                  {journalNotes.length === 0 ? (
+                    <p className="text-xs text-[var(--muted)]">{t("No saved notes for today.", "오늘 저장된 노트가 없습니다.")}</p>
+                  ) : (
+                    <div className="grid gap-1.5">
+                      {journalNotes.map((note, index) => (
+                        <p key={`saved-note-${index}`} className="break-words whitespace-pre-wrap text-xs leading-5 text-[var(--ink)]">
+                          {`- ${note}`}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
           </section>
@@ -3537,7 +3747,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 <div className="grid gap-3">
                   {displayedDays.map((day) => {
                     const rowActivities = monthActivitiesByDate[day] ?? [];
-                    const memoLines = splitMemoLines(monthJournalByDate[day] ?? "");
+                    const memoLines = parseJournalNotes(monthJournalByDate[day] ?? "");
                     const isActive = day === selectedDate;
                     const date = new Date(`${day}T00:00:00`);
 
@@ -3609,7 +3819,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                                 <p
                                   key={`${day}-memo-${index}`}
                                   className="break-words text-[11px] leading-5 text-[var(--ink)]"
-                                >{`- ${line.replace(/^-\s*/, "")}`}</p>
+                                >{`- ${line}`}</p>
                               ))}
                               {memoLines.length > 2 ? <p className="text-[11px] leading-5 text-[var(--muted)]">...</p> : null}
                             </div>
@@ -3692,16 +3902,16 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
         />
       )}
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--border)] bg-[var(--bg)]/96 backdrop-blur md:hidden pb-[env(safe-area-inset-bottom)]">
-        <div className="mx-auto grid h-14 w-full max-w-5xl grid-cols-4">
+      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--border)] bg-[var(--bg)] pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+        <div className="mx-auto grid h-16 w-full max-w-[430px] grid-cols-4">
               {diaryTabs.map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveDiaryTab(tab.id)}
-                  className={`flex h-full flex-col items-center justify-center gap-0.5 border-l border-[var(--border)] last:border-r-0 text-[10px] font-semibold tracking-wide transition-colors ${
+                  className={`flex h-full flex-col items-center justify-center gap-0.5 text-[10px] font-semibold tracking-wide transition-colors ${
                 activeDiaryTab === tab.id
-                  ? "text-[var(--ink)]"
+                  ? "text-[var(--primary)]"
                   : "text-[var(--muted)]"
               }`}
             >

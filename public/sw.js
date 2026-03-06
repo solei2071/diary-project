@@ -1,4 +1,4 @@
-const SW_CACHE_NAME = "daily-flow-diary-v2";
+const SW_CACHE_NAME = "daily-flow-diary-v3";
 const OFFLINE_URL = "/offline.html";
 
 const PRECACHE_URLS = [
@@ -40,8 +40,16 @@ const isStaticRequest = (request) => {
   );
 };
 
+const isHtmlResponse = (response) => {
+  const contentType = response.headers.get("content-type") || "";
+  return contentType.includes("text/html");
+};
+
 const cacheResponse = async (request, response) => {
   if (!response || !response.ok) return;
+  // 정적 리소스 요청에 HTML(오류 페이지/오프라인 페이지)이 섞여 캐시되면
+  // 이후 JS/CSS MIME 오류가 반복되므로 저장하지 않는다.
+  if (isStaticRequest(request) && isHtmlResponse(response)) return;
   const cache = await caches.open(SW_CACHE_NAME);
   await cache.put(request, response.clone());
 };
@@ -72,7 +80,8 @@ const staleWhileRevalidate = async (request) => {
     return cached;
   }
 
-  return (await updatePromise) || (await cache.match(request)) || (await cache.match(OFFLINE_URL)) || new Response("", { status: 503, statusText: "Offline" });
+  // 정적 리소스(js/css/font/image)는 오프라인 HTML을 반환하면 브라우저가 파싱 실패한다.
+  return (await updatePromise) || (await cache.match(request)) || new Response("", { status: 503, statusText: "Offline" });
 };
 
 self.addEventListener("fetch", (event) => {

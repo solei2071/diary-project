@@ -22,10 +22,13 @@ import {
 } from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
 import {
+  ChevronLeft,
+  ChevronRight,
   CheckCircle2,
   CreditCard,
   Download,
   Copy,
+  Bell,
   Fingerprint,
   Globe,
   KeyRound,
@@ -82,7 +85,8 @@ declare global {
 }
 
 type AppLanguage = "en" | "ko";
-type FontStyle = "default" | "clean" | "rounded";
+type FontStyle = "bold" | "clean" | "rounded";
+type SettingsDetailSection = "root" | "data" | "appearance" | "notifications" | "plan";
 
 const LOCAL_DATA_STORAGE_KEYS = [
   "diary-draft-todos",
@@ -110,6 +114,13 @@ const PURCHASE_PENDING_STATE_KEY = "diary-purchase-pending";
 const PURCHASE_PENDING_TTL_MS = 10 * 60 * 1000;
 const APP_FONT_STYLE_STORAGE_KEY = "diary-font-style";
 const APP_LAST_SYNC_AT_STORAGE_KEY = "diary-last-sync-at";
+
+const resolveStoredFontStyle = (value: string | null): FontStyle => {
+  if (value === "bold" || value === "clean" || value === "rounded") return value;
+  // legacy migration: 이전 "default" 키는 "bold"로 치환
+  if (value === "default") return "bold";
+  return "rounded";
+};
 
 type PurchasePendingState = {
   token: string;
@@ -234,7 +245,7 @@ export default function Home() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<"light" | "dark">("light");
-  const [fontStyle, setFontStyle] = useState<FontStyle>("default");
+  const [fontStyle, setFontStyle] = useState<FontStyle>("rounded");
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("en");
   const [symbolPlan, setSymbolPlan] = useState<UserSymbolPlan>("free");
   const [planInfo, setPlanInfo] = useState<PlanState>({
@@ -247,6 +258,7 @@ export default function Home() {
   });
   const [planError, setPlanError] = useState("");
   const [settingsPanel, setSettingsPanel] = useState<"settings" | "account">("settings");
+  const [settingsDetailSection, setSettingsDetailSection] = useState<SettingsDetailSection>("root");
   const [isAccountBusy, setIsAccountBusy] = useState(false);
   const [accountMessage, setAccountMessage] = useState("");
   const [accountError, setAccountError] = useState("");
@@ -274,6 +286,8 @@ export default function Home() {
   const [isSecurityBusy, setIsSecurityBusy] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [deleteAccountStep, setDeleteAccountStep] = useState<0 | 1 | 2>(0);
+  const [deleteAccountInput, setDeleteAccountInput] = useState("");
   const lockAutoBiometricTriedRef = useRef(false);
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const hasAccountDeleteEndpoint = Boolean(ACCOUNT_DELETE_ENDPOINT);
@@ -401,10 +415,7 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = localStorage.getItem(APP_FONT_STYLE_STORAGE_KEY);
-    const nextStyle: FontStyle =
-      saved === "clean" || saved === "rounded" || saved === "default"
-        ? saved
-        : "default";
+    const nextStyle = resolveStoredFontStyle(saved);
     setFontStyle(nextStyle);
     document.documentElement.setAttribute("data-font-style", nextStyle);
   }, []);
@@ -465,6 +476,7 @@ export default function Home() {
 
   const closeSettings = () => {
     setIsSettingsOpen(false);
+    setSettingsDetailSection("root");
   };
   const signOut = async () => {
     const userId = session?.user?.id ?? null;
@@ -865,14 +877,29 @@ export default function Home() {
     return `mailto:${PRIVACY_CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
 
+  const startDeleteAccountFlow = () => {
+    if (!session?.user) return;
+    setDeleteAccountStep(1);
+    setDeleteAccountInput("");
+    setAccountError("");
+    setAccountMessage("");
+  };
+
+  const advanceDeleteAccountStep = () => {
+    setDeleteAccountStep(2);
+    setDeleteAccountInput("");
+  };
+
+  const cancelDeleteAccountFlow = () => {
+    setDeleteAccountStep(0);
+    setDeleteAccountInput("");
+  };
+
   const requestDeleteAccount = async () => {
     if (!session?.user) return;
-    const confirmMessage = isKorean
-      ? "계정을 완전히 삭제하시겠습니까? 계정과 연결된 Supabase 사용자, 로컬 캐시까지 제거됩니다. 이 작업은 되돌릴 수 없습니다."
-      : "Delete your account permanently? This will remove your Supabase user and local cache data. This action cannot be undone.";
-    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
-
     setIsAccountBusy(true);
+    setDeleteAccountStep(0);
+    setDeleteAccountInput("");
     setAccountError("");
     setAccountMessage("");
 
@@ -884,25 +911,29 @@ export default function Home() {
       if (!endpoint) {
         if (contactEmail) {
           window.location.assign(getAccountDeletionMailto());
+          void copyToClipboard(draft, t("Account deletion request", "계정 삭제 요청"));
           setAccountMessage(
             t(
-              "No deletion API configured. We prepared an email for support and copied the request template.",
-              "계정 삭제 API가 설정되지 않았습니다. 지원 요청 이메일을 열고, 요청 템플릿이 준비되어 있습니다."
+              "No deletion API configured. We prepared an email for support.",
+              "계정 삭제 API가 없습니다. 지원 요청 이메일을 열었습니다."
             )
           );
-          void copyToClipboard(draft, t("Account deletion request", "계정 삭제 요청"));
           setIsAccountBusy(false);
           return;
         }
 
-        setAccountError(
-          t(
-            "No account deletion endpoint or support contact is configured. Please contact support manually.",
-            "계정 삭제 API 또는 지원 메일이 설정되지 않았습니다. 수동으로 지원팀에 문의해 주세요."
-          )
-        );
-        void copyToClipboard(draft, t("Account deletion request", "계정 삭제 요청"));
-        setIsAccountBusy(false);
+        // 엔드포인트·이메일 모두 없음: Supabase에서 직접 데이터 삭제 후 로그아웃
+        const userId = session.user.id;
+        await Promise.allSettled([
+          supabase.from("todos").delete().eq("user_id", userId),
+          supabase.from("journal_entries").delete().eq("user_id", userId),
+          supabase.from("daily_activities").delete().eq("user_id", userId),
+          supabase.from("user_subscriptions").delete().eq("user_id", userId),
+          supabase.from("user_entitlements").delete().eq("user_id", userId)
+        ]);
+        clearLocalDiaryData(userId);
+        emitLocalDataCleared();
+        await signOut().catch(() => {});
         return;
       }
 
@@ -1040,12 +1071,14 @@ export default function Home() {
     if (!session) {
       setSubscriptionInfo(null);
       setSettingsPanel("settings");
+      setSettingsDetailSection("root");
       resetAccountForm();
       return;
     }
 
     if (isSettingsOpen) {
       setSettingsPanel((prev) => (prev === "settings" || prev === "account" ? prev : "settings"));
+      setSettingsDetailSection("root");
       void loadAccountSubscription();
     }
   }, [isSettingsOpen, session, loadAccountSubscription]);
@@ -1218,10 +1251,7 @@ export default function Home() {
       document.documentElement.lang = restoredLanguage;
 
       const savedFontStyle = localStorage.getItem(APP_FONT_STYLE_STORAGE_KEY);
-      const restoredFontStyle: FontStyle =
-        savedFontStyle === "clean" || savedFontStyle === "rounded" || savedFontStyle === "default"
-          ? savedFontStyle
-          : "default";
+      const restoredFontStyle = resolveStoredFontStyle(savedFontStyle);
       setFontStyle(restoredFontStyle);
       document.documentElement.setAttribute("data-font-style", restoredFontStyle);
 
@@ -1256,7 +1286,8 @@ export default function Home() {
 
   const exportCurrentViewToPdf = (range: "day" | "week" | "month") => {
     if (typeof window === "undefined") return;
-    window.dispatchEvent(new CustomEvent("diary:export-pdf", { detail: { range } }));
+    const popup = window.open("about:blank", "_blank", "width=980,height=900");
+    window.dispatchEvent(new CustomEvent("diary:export-pdf", { detail: { range, popup } }));
   };
 
 
@@ -1494,6 +1525,16 @@ export default function Home() {
 
   const canChangePassword = accountProvider === "email";
   const isAdmin = isAdminUser(session?.user ?? null);
+  const settingsDetailTitle =
+    settingsDetailSection === "data"
+      ? t("Data management", "데이터 관리")
+      : settingsDetailSection === "appearance"
+        ? t("Appearance", "외관")
+        : settingsDetailSection === "notifications"
+          ? t("Notifications", "알림")
+          : settingsDetailSection === "plan"
+            ? t("Plan", "플랜")
+            : t("Settings", "설정");
   // 세션 로드 전에는 로딩 UI 표시
   if (!ready) {
     return <main className="min-h-screen flex items-center justify-center">{t("Loading...", "불러오는 중…")}</main>;
@@ -1507,7 +1548,7 @@ export default function Home() {
         className="sticky top-0 z-40"
         style={{ paddingTop: "var(--safe-top)" }}
       >
-        <div className="relative mx-auto flex w-full max-w-5xl items-center justify-end px-4 py-2">
+        <div className="relative mx-auto flex w-full max-w-[430px] items-center justify-end px-4 py-2 lg:max-w-5xl">
           {/* 설정 버튼 (톱니바퀴) */}
           <button
             onClick={() => setIsSettingsOpen((prev) => !prev)}
@@ -1544,7 +1585,10 @@ export default function Home() {
               )}
               <div className="mb-2 flex rounded-md border border-[var(--border)] overflow-hidden">
                 <button
-                  onClick={() => setSettingsPanel("settings")}
+                  onClick={() => {
+                    setSettingsPanel("settings");
+                    setSettingsDetailSection("root");
+                  }}
                   className={`flex-1 py-1.5 text-xs font-semibold ${
                     settingsPanel === "settings"
                       ? "bg-[var(--bg-hover)] text-[var(--ink)]"
@@ -1565,370 +1609,462 @@ export default function Home() {
               </div>
               {settingsPanel === "settings" ? (
                 <>
-                  {/* Data — sync, backup, restore, export, clear */}
-                  <div className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
-                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-xs">
-                      <div className="min-w-0">
-                        <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
-                          <Globe className="h-3.5 w-3.5" />
-                          {t("Sync", "동기화")}
-                        </span>
-                        <p className="mt-0.5 truncate text-[10px] text-[var(--muted)]">
-                          {!session
-                            ? t("Login required for cloud sync.", "클라우드 동기화는 로그인 후 사용 가능합니다.")
-                            : lastSyncAt
-                            ? `${t("Last sync", "마지막 동기화")}: ${formatDateOrDash(lastSyncAt)}`
-                            : t("No recent sync record.", "최근 동기화 기록이 없습니다.")}
-                        </p>
-                      </div>
+                  {settingsDetailSection === "root" ? (
+                    <div className="space-y-1.5">
                       <button
                         type="button"
-                        onClick={triggerManualSync}
-                        disabled={!session || isSyncing}
-                        className="shrink-0 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => setSettingsDetailSection("plan")}
+                        className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-2.5 py-2 text-left hover:bg-[var(--bg-hover)]"
                       >
-                        {isSyncing ? t("Syncing...", "동기화 중...") : t("Sync now", "지금 동기화")}
+                        <span className="min-w-0">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ink)]">
+                            <Sparkles className="h-3.5 w-3.5" />
+                            {t("Plan", "플랜")}
+                          </span>
+                          <span className="mt-0.5 block text-[10px] text-[var(--muted)]">
+                            {t("Current plan and upgrade", "현재 요금제 및 업그레이드")}
+                          </span>
+                        </span>
+                        <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSettingsDetailSection("appearance")}
+                        className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-2.5 py-2 text-left hover:bg-[var(--bg-hover)]"
+                      >
+                        <span className="min-w-0">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ink)]">
+                            <Palette className="h-3.5 w-3.5" />
+                            {t("Appearance", "외관")}
+                          </span>
+                          <span className="mt-0.5 block text-[10px] text-[var(--muted)]">
+                            {t("Theme, language, font", "테마, 언어, 폰트")}
+                          </span>
+                        </span>
+                        <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSettingsDetailSection("notifications")}
+                        className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-2.5 py-2 text-left hover:bg-[var(--bg-hover)]"
+                      >
+                        <span className="min-w-0">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ink)]">
+                            <Bell className="h-3.5 w-3.5" />
+                            {t("Notifications", "알림")}
+                          </span>
+                          <span className="mt-0.5 block text-[10px] text-[var(--muted)]">
+                            {t("Reminder and security lock", "리마인더 및 보안 잠금")}
+                          </span>
+                        </span>
+                        <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSettingsDetailSection("data")}
+                        className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-2.5 py-2 text-left hover:bg-[var(--bg-hover)]"
+                      >
+                        <span className="min-w-0">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ink)]">
+                            <Globe className="h-3.5 w-3.5" />
+                            {t("Data", "데이터")}
+                          </span>
+                          <span className="mt-0.5 block text-[10px] text-[var(--muted)]">
+                            {t("Backup, restore, sync, export", "백업, 복원, 동기화, 내보내기")}
+                          </span>
+                        </span>
+                        <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void exportBackupToJson()}
-                      className="flex w-full items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                    >
-                      <span className="inline-flex items-center gap-1.5">
-                        <Download className="h-3.5 w-3.5" />
-                        {t("Backup", "백업")}
-                      </span>
-                      <span className="text-[10px] text-[var(--muted)]">JSON</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openRestorePicker}
-                      className="flex w-full items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                    >
-                      <span className="inline-flex items-center gap-1.5">
-                        <Upload className="h-3.5 w-3.5" />
-                        {t("Restore", "복원")}
-                      </span>
-                      <span className="text-[10px] text-[var(--muted)]">{t("From file", "파일에서")}</span>
-                    </button>
-                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
-                      <span className="inline-flex items-center gap-1.5 text-xs text-[var(--ink)]">
-                        <Printer className="h-3.5 w-3.5" />
-                        {t("Export PDF", "PDF 내보내기")}
-                      </span>
-                      <div className="flex gap-1">
+                  ) : (
+                    <>
+                      <div className="mb-2 flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => exportCurrentViewToPdf("day")}
-                          className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                          onClick={() => setSettingsDetailSection("root")}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
+                          aria-label={t("Back to settings", "설정 목록으로 돌아가기")}
                         >
-                          {t("Day", "일간")}
+                          <ChevronLeft className="h-3.5 w-3.5" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => exportCurrentViewToPdf("week")}
-                          className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                        >
-                          {t("Week", "주간")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => exportCurrentViewToPdf("month")}
-                          className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                        >
-                          {t("Month", "월간")}
-                        </button>
+                        <p className="text-xs font-semibold text-[var(--ink)]">{settingsDetailTitle}</p>
                       </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => clearDeviceData()}
-                      className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger)]/5"
-                    >
-                      <span>{session ? t("Clear device data", "기기 로컬 데이터 삭제") : t("Clear local data", "로컬 데이터 삭제")}</span>
-                      <span className="text-[10px] text-[var(--muted)]">{t("Local only", "로컬만")}</span>
-                    </button>
-                  </div>
-                  {/* Appearance — theme, language, font */}
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Appearance", "외관")}</p>
-                  <div className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
-                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
-                      <span className="text-xs text-[var(--ink)]">{t("Theme", "테마")}</span>
-                      <div className="flex items-center gap-1 text-xs">
-                        <button
-                          onClick={() => applyThemeMode("light")}
-                          className={`flex items-center gap-1 rounded-md border px-2 py-1 ${themeMode === "light" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
-                          aria-label={t("Set light mode", "라이트 모드로 전환")}
-                        >
-                          <Sun className="h-3 w-3" /> {t("Light", "라이트")}
-                        </button>
-                        <button
-                          onClick={() => applyThemeMode("dark")}
-                          className={`flex items-center gap-1 rounded-md border px-2 py-1 ${themeMode === "dark" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
-                          aria-label={t("Set dark mode", "다크 모드로 전환")}
-                        >
-                          <Moon className="h-3 w-3" /> {t("Dark", "다크")}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
-                      <span className="text-xs text-[var(--ink)]">{t("Language", "언어")}</span>
-                      <div className="flex items-center gap-1 text-xs">
-                        <button
-                          onClick={() => applyLanguage("en")}
-                          className={`rounded-md border px-2 py-1 ${appLanguage === "en" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
-                          aria-label={t("Set English language", "영어로 전환")}
-                        >
-                          EN
-                        </button>
-                        <button
-                          onClick={() => applyLanguage("ko")}
-                          className={`rounded-md border px-2 py-1 ${appLanguage === "ko" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
-                          aria-label={t("Set Korean language", "한국어로 전환")}
-                        >
-                          KO
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 px-2.5 py-2">
-                      <span className="text-xs text-[var(--ink)]">{t("Font", "폰트")}</span>
-                      <div className="flex items-center gap-1 text-xs">
-                        <button
-                          onClick={() => applyFontStyle("default")}
-                          className={`rounded-md border px-2 py-1 ${fontStyle === "default" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
-                        >
-                          {t("Default", "기본")}
-                        </button>
-                        <button
-                          onClick={() => applyFontStyle("clean")}
-                          className={`rounded-md border px-2 py-1 ${fontStyle === "clean" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
-                        >
-                          {t("Clean", "클린")}
-                        </button>
-                        <button
-                          onClick={() => applyFontStyle("rounded")}
-                          className={`rounded-md border px-2 py-1 ${fontStyle === "rounded" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
-                        >
-                          {t("Rounded", "라운드")}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  {/* 알림 설정 */}
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Notifications", "알림")}</p>
-                  <div className="mb-2 rounded-md border border-[var(--border)] p-2">
-                    {notifPermission === "unsupported" ? (
-                      <p className="text-[11px] text-[var(--muted)]">{t("Notifications not supported in this browser.", "이 브라우저에서는 알림을 지원하지 않습니다.")}</p>
-                    ) : notifPermission === "denied" ? (
-                      <p className="text-[11px] text-[var(--muted)]">{t("Notifications are blocked. Allow them in browser settings.", "알림이 차단되어 있습니다. 브라우저 설정에서 허용해 주세요.")}</p>
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs text-[var(--ink)]">{t("Daily reminder", "일일 리마인더")}</span>
-                          <button
-                            type="button"
-                            onClick={() => void handleNotifToggle()}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${notifSettings.enabled ? "bg-[var(--primary)]" : "bg-[var(--border-strong)]"}`}
-                            role="switch"
-                            aria-checked={notifSettings.enabled}
-                          >
-                            <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${notifSettings.enabled ? "translate-x-4" : "translate-x-0"}`} />
-                          </button>
-                        </div>
-                        {notifSettings.enabled && (
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className="text-[11px] text-[var(--muted)]">{t("Time", "시간")}</span>
-                            <input
-                              type="time"
-                              value={notifSettings.reminderTime}
-                              onChange={(e) => handleNotifTimeChange(e.target.value)}
-                              className="n-input h-7 px-2 py-1 text-xs"
-                            />
+                      {accountError && <p className="mb-2 text-xs text-[var(--danger)]">{accountError}</p>}
+                      {accountMessage && <p className="mb-2 text-xs text-[var(--success)]">{accountMessage}</p>}
+                      {planError && <p className="mb-2 text-xs text-[var(--danger)]">{planError}</p>}
+
+                      {settingsDetailSection === "appearance" ? (
+                        <div className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
+                          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
+                            <span className="text-xs text-[var(--ink)]">{t("Theme", "테마")}</span>
+                            <div className="flex items-center gap-1 text-xs">
+                              <button
+                                onClick={() => applyThemeMode("light")}
+                                className={`flex items-center gap-1 rounded-md border px-2 py-1 ${themeMode === "light" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                                aria-label={t("Set light mode", "라이트 모드로 전환")}
+                              >
+                                <Sun className="h-3 w-3" /> {t("Light", "라이트")}
+                              </button>
+                              <button
+                                onClick={() => applyThemeMode("dark")}
+                                className={`flex items-center gap-1 rounded-md border px-2 py-1 ${themeMode === "dark" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                                aria-label={t("Set dark mode", "다크 모드로 전환")}
+                              >
+                                <Moon className="h-3 w-3" /> {t("Dark", "다크")}
+                              </button>
+                            </div>
                           </div>
-                        )}
-                        <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
-                          {t("Shows a reminder to record your day at the set time.", "설정한 시간에 오늘 기록을 남기도록 리마인더를 표시합니다.")}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <details className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
-                    <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-2 text-xs font-semibold text-[var(--ink)]">
-                      <span>{t("Security lock", "보안 잠금")}</span>
-                      {lockConfig.enabled ? (
-                        <span className="rounded-full bg-[var(--primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--primary)]">
-                          {t("On", "켜짐")}
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-[var(--bg-hover)] px-2 py-0.5 text-[10px] font-semibold text-[var(--muted)]">
-                          {t("Off", "꺼짐")}
-                        </span>
-                      )}
-                    </summary>
-                    <div className="border-t border-[var(--border)] p-2">
-                      <p className="mb-2 text-[11px] leading-5 text-[var(--muted)]">
-                        {t(
-                          "Protect app access with Face ID/Touch ID and/or a local app passcode.",
-                          "Face ID/Touch ID 또는 로컬 앱 비밀번호로 앱 접근을 보호합니다."
-                        )}
-                      </p>
-                      <div className="mb-2 flex gap-2">
-                        {lockConfig.enabled ? (
-                          <button
-                            type="button"
-                            onClick={disableAppLock}
-                            className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                          >
-                            {t("Disable lock", "잠금 끄기")}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={enableAppLock}
-                            disabled={!hasSecurityMethod}
-                            className="flex-1 rounded-md bg-[var(--primary)] px-2 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {t("Enable lock", "잠금 켜기")}
-                          </button>
-                        )}
-                        {lockConfig.enabled ? (
-                          <button
-                            type="button"
-                            onClick={lockNow}
-                            className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                          >
-                            {t("Lock now", "지금 잠그기")}
-                          </button>
-                        ) : null}
-                      </div>
+                          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
+                            <span className="text-xs text-[var(--ink)]">{t("Language", "언어")}</span>
+                            <div className="flex items-center gap-1 text-xs">
+                              <button
+                                onClick={() => applyLanguage("en")}
+                                className={`rounded-md border px-2 py-1 ${appLanguage === "en" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                                aria-label={t("Set English language", "영어로 전환")}
+                              >
+                                EN
+                              </button>
+                              <button
+                                onClick={() => applyLanguage("ko")}
+                                className={`rounded-md border px-2 py-1 ${appLanguage === "ko" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                                aria-label={t("Set Korean language", "한국어로 전환")}
+                              >
+                                KO
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+                            <span className="text-xs text-[var(--ink)]">{t("Font", "폰트")}</span>
+                            <div className="flex items-center gap-1 text-xs">
+                              <button
+                                onClick={() => applyFontStyle("bold")}
+                                className={`rounded-md border px-2 py-1 ${fontStyle === "bold" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                              >
+                                {t("Bold", "볼드")}
+                              </button>
+                              <button
+                                onClick={() => applyFontStyle("clean")}
+                                className={`rounded-md border px-2 py-1 ${fontStyle === "clean" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                              >
+                                {t("Clean", "클린")}
+                              </button>
+                              <button
+                                onClick={() => applyFontStyle("rounded")}
+                                className={`rounded-md border px-2 py-1 ${fontStyle === "rounded" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                              >
+                                {t("Rounded", "라운드")}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
 
-                      <div className="rounded-md border border-[var(--border)] p-2">
-                        <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
-                          <Fingerprint className="h-3.5 w-3.5" />
-                          {t("Face ID / Touch ID", "Face ID / Touch ID")}
-                        </p>
-                        <p className="mb-2 text-[10px] leading-4 text-[var(--muted)]">
-                          {biometricSupported
-                            ? t("Uses this device's built-in biometric prompt.", "이 기기의 생체 인증 프롬프트를 사용합니다.")
-                            : t("Biometric API is unavailable in this browser.", "이 브라우저에서는 생체 인증 API를 사용할 수 없습니다.")}
-                        </p>
-                        {lockConfig.useBiometric ? (
-                          <button
-                            type="button"
-                            onClick={removeBiometricLock}
-                            disabled={isSecurityBusy}
-                            className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
-                          >
-                            {t("Remove biometric lock", "생체 인증 잠금 해제")}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => void setupBiometricLock()}
-                            disabled={!biometricSupported || isSecurityBusy}
-                            className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {isSecurityBusy ? t("Setting up...", "설정 중...") : t("Set up biometric lock", "생체 인증 잠금 설정")}
-                          </button>
-                        )}
-                      </div>
+                      {settingsDetailSection === "notifications" ? (
+                        <>
+                          <div className="mb-2 rounded-md border border-[var(--border)] p-2">
+                            {notifPermission === "unsupported" ? (
+                              <p className="text-[11px] text-[var(--muted)]">{t("Notifications not supported in this browser.", "이 브라우저에서는 알림을 지원하지 않습니다.")}</p>
+                            ) : notifPermission === "denied" ? (
+                              <p className="text-[11px] text-[var(--muted)]">{t("Notifications are blocked. Allow them in browser settings.", "알림이 차단되어 있습니다. 브라우저 설정에서 허용해 주세요.")}</p>
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs text-[var(--ink)]">{t("Daily reminder", "일일 리마인더")}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleNotifToggle()}
+                                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${notifSettings.enabled ? "bg-[var(--primary)]" : "bg-[var(--border-strong)]"}`}
+                                    role="switch"
+                                    aria-checked={notifSettings.enabled}
+                                  >
+                                    <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${notifSettings.enabled ? "translate-x-4" : "translate-x-0"}`} />
+                                  </button>
+                                </div>
+                                {notifSettings.enabled && (
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <span className="text-[11px] text-[var(--muted)]">{t("Time", "시간")}</span>
+                                    <input
+                                      type="time"
+                                      value={notifSettings.reminderTime}
+                                      onChange={(e) => handleNotifTimeChange(e.target.value)}
+                                      className="n-input h-7 px-2 py-1 text-xs"
+                                    />
+                                  </div>
+                                )}
+                                <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
+                                  {t("Shows a reminder to record your day at the set time.", "설정한 시간에 오늘 기록을 남기도록 리마인더를 표시합니다.")}
+                                </p>
+                              </>
+                            )}
+                          </div>
+                          <details className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
+                            <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-2 text-xs font-semibold text-[var(--ink)]">
+                              <span>{t("Security lock", "보안 잠금")}</span>
+                              {lockConfig.enabled ? (
+                                <span className="rounded-full bg-[var(--primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--primary)]">
+                                  {t("On", "켜짐")}
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-[var(--bg-hover)] px-2 py-0.5 text-[10px] font-semibold text-[var(--muted)]">
+                                  {t("Off", "꺼짐")}
+                                </span>
+                              )}
+                            </summary>
+                            <div className="border-t border-[var(--border)] p-2">
+                              <p className="mb-2 text-[11px] leading-5 text-[var(--muted)]">
+                                {t(
+                                  "Protect app access with Face ID/Touch ID and/or a local app passcode.",
+                                  "Face ID/Touch ID 또는 로컬 앱 비밀번호로 앱 접근을 보호합니다."
+                                )}
+                              </p>
+                              <div className="mb-2 flex gap-2">
+                                {lockConfig.enabled ? (
+                                  <button
+                                    type="button"
+                                    onClick={disableAppLock}
+                                    className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                  >
+                                    {t("Disable lock", "잠금 끄기")}
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={enableAppLock}
+                                    disabled={!hasSecurityMethod}
+                                    className="flex-1 rounded-md bg-[var(--primary)] px-2 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {t("Enable lock", "잠금 켜기")}
+                                  </button>
+                                )}
+                                {lockConfig.enabled ? (
+                                  <button
+                                    type="button"
+                                    onClick={lockNow}
+                                    className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                  >
+                                    {t("Lock now", "지금 잠그기")}
+                                  </button>
+                                ) : null}
+                              </div>
 
-                      <div className="mt-2 rounded-md border border-[var(--border)] p-2">
-                        <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
-                          <Lock className="h-3.5 w-3.5" />
-                          {t("App passcode", "앱 비밀번호")}
-                        </p>
-                        <input
-                          value={securityPasscode}
-                          onChange={(e) => setSecurityPasscode(e.target.value)}
-                          type="password"
-                          className="n-input mb-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
-                          placeholder={t("Enter app passcode", "앱 비밀번호 입력")}
-                          autoComplete="new-password"
-                        />
-                        <input
-                          value={securityPasscodeConfirm}
-                          onChange={(e) => setSecurityPasscodeConfirm(e.target.value)}
-                          type="password"
-                          className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
-                          placeholder={t("Confirm app passcode", "앱 비밀번호 확인")}
-                          autoComplete="new-password"
-                        />
-                        <div className="mt-2 flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void saveAppPasscode()}
-                            disabled={isSecurityBusy}
-                            className="flex-1 rounded-md bg-[var(--primary)] px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                          >
-                            {lockConfig.usePasscode ? t("Update passcode", "비밀번호 변경") : t("Set passcode", "비밀번호 설정")}
-                          </button>
-                          {lockConfig.usePasscode ? (
+                              <div className="rounded-md border border-[var(--border)] p-2">
+                                <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
+                                  <Fingerprint className="h-3.5 w-3.5" />
+                                  {t("Face ID / Touch ID", "Face ID / Touch ID")}
+                                </p>
+                                <p className="mb-2 text-[10px] leading-4 text-[var(--muted)]">
+                                  {biometricSupported
+                                    ? t("Uses this device's built-in biometric prompt.", "이 기기의 생체 인증 프롬프트를 사용합니다.")
+                                    : t("Biometric API is unavailable in this browser.", "이 브라우저에서는 생체 인증 API를 사용할 수 없습니다.")}
+                                </p>
+                                {lockConfig.useBiometric ? (
+                                  <button
+                                    type="button"
+                                    onClick={removeBiometricLock}
+                                    disabled={isSecurityBusy}
+                                    className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
+                                  >
+                                    {t("Remove biometric lock", "생체 인증 잠금 해제")}
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => void setupBiometricLock()}
+                                    disabled={!biometricSupported || isSecurityBusy}
+                                    className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {isSecurityBusy ? t("Setting up...", "설정 중...") : t("Set up biometric lock", "생체 인증 잠금 설정")}
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="mt-2 rounded-md border border-[var(--border)] p-2">
+                                <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
+                                  <Lock className="h-3.5 w-3.5" />
+                                  {t("App passcode", "앱 비밀번호")}
+                                </p>
+                                <input
+                                  value={securityPasscode}
+                                  onChange={(e) => setSecurityPasscode(e.target.value)}
+                                  type="password"
+                                  className="n-input mb-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
+                                  placeholder={t("Enter app passcode", "앱 비밀번호 입력")}
+                                  autoComplete="new-password"
+                                />
+                                <input
+                                  value={securityPasscodeConfirm}
+                                  onChange={(e) => setSecurityPasscodeConfirm(e.target.value)}
+                                  type="password"
+                                  className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
+                                  placeholder={t("Confirm app passcode", "앱 비밀번호 확인")}
+                                  autoComplete="new-password"
+                                />
+                                <div className="mt-2 flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void saveAppPasscode()}
+                                    disabled={isSecurityBusy}
+                                    className="flex-1 rounded-md bg-[var(--primary)] px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                                  >
+                                    {lockConfig.usePasscode ? t("Update passcode", "비밀번호 변경") : t("Set passcode", "비밀번호 설정")}
+                                  </button>
+                                  {lockConfig.usePasscode ? (
+                                    <button
+                                      type="button"
+                                      onClick={removeAppPasscode}
+                                      disabled={isSecurityBusy}
+                                      className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
+                                    >
+                                      {t("Remove passcode", "비밀번호 삭제")}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              {securityError ? <p className="mt-2 text-[11px] text-[var(--danger)]">{securityError}</p> : null}
+                              {securityMessage ? <p className="mt-2 text-[11px] text-[var(--success)]">{securityMessage}</p> : null}
+                            </div>
+                          </details>
+                        </>
+                      ) : null}
+
+                      {settingsDetailSection === "plan" ? (
+                        <>
+                          <div className="mb-2 rounded-md border border-[var(--border)] p-2">
+                            <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                              <span className="text-[var(--ink)]">
+                                {isPro ? t("Pro (unlocked)", "Pro (활성화됨)") : t("Free", "무료")}
+                              </span>
+                              {isPro ? (
+                                <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
+                              ) : (
+                                <Sparkles className="h-4 w-4 text-[var(--primary)]" />
+                              )}
+                            </div>
+                            <p className="text-[11px] leading-5 text-[var(--muted)]">
+                              {t("Symbol limit", "심볼 제한")}: {isPro ? 40 : 10}
+                            </p>
+                            {isPro ? null : (
+                              <>
+                                <button
+                                  onClick={() => void startUnlockCheckout()}
+                                  className="mt-2 w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white"
+                                >
+                                  {t("Unlock Pro", "Pro 잠금 해제")}
+                                </button>
+                                <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
+                                  {t("Unlock Pro to remove ads.", "Pro로 업그레이드하면 광고를 제거할 수 있습니다.")}
+                                </p>
+                              </>
+                            )}
+                            <p className="mt-2 text-[11px] leading-5 text-[var(--muted)]">
+                              {t("Plan source", "플랜 출처")}: {planSourceLabel(planInfo.source)}
+                            </p>
+                          </div>
+                          {isAdmin ? (
                             <button
-                              type="button"
-                              onClick={removeAppPasscode}
-                              disabled={isSecurityBusy}
-                              className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
+                              onClick={() => {
+                                closeSettings();
+                                if (typeof window !== "undefined") {
+                                  window.location.assign("/admin");
+                                }
+                              }}
+                              className="mb-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)]"
                             >
-                              {t("Remove passcode", "비밀번호 삭제")}
+                              {t("Admin", "관리자")}
                             </button>
                           ) : null}
-                        </div>
-                      </div>
+                        </>
+                      ) : null}
 
-                      {securityError ? <p className="mt-2 text-[11px] text-[var(--danger)]">{securityError}</p> : null}
-                      {securityMessage ? <p className="mt-2 text-[11px] text-[var(--success)]">{securityMessage}</p> : null}
-                    </div>
-                  </details>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Plan", "플랜")}</p>
-                  <div className="mb-2 rounded-md border border-[var(--border)] p-2">
-                    <div className="mb-2 flex items-center justify-between gap-2 text-xs">
-                    <span className="text-[var(--ink)]">
-                        {isPro ? t("Pro (unlocked)", "Pro (활성화됨)") : t("Free", "무료")}
-                      </span>
-                      {isPro ? (
-                        <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
-                      ) : (
-                        <Sparkles className="h-4 w-4 text-[var(--primary)]" />
-                      )}
-                    </div>
-                  <p className="text-[11px] leading-5 text-[var(--muted)]">
-                    {t("Symbol limit", "심볼 제한")}: {isPro ? 40 : 10}
-                  </p>
-                    {isPro ? null : (
-                      <>
-                        <button
-                          onClick={() => void startUnlockCheckout()}
-                          className="mt-2 w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white"
-                        >
-                          {t("Unlock Pro", "Pro 잠금 해제")}
-                        </button>
-                        <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
-                          {t("Unlock Pro to remove ads.", "Pro로 업그레이드하면 광고를 제거할 수 있습니다.")}
-                        </p>
-                      </>
-                    )}
-                  <p className="mt-2 text-[11px] leading-5 text-[var(--muted)]">
-                      {t("Plan source", "플랜 출처")}: {planSourceLabel(planInfo.source)}
-                    </p>
-                  </div>
-                  {isAdmin ? (
-                    <button
-                      onClick={() => {
-                        closeSettings();
-                        if (typeof window !== "undefined") {
-                          window.location.assign("/admin");
-                        }
-                      }}
-                      className="mb-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)]"
-                    >
-                      {t("Admin", "관리자")}
-                    </button>
-                  ) : null}
-                  {accountError && <p className="mb-2 text-xs text-[var(--danger)]">{accountError}</p>}
-                  {accountMessage && <p className="mb-2 text-xs text-[var(--success)]">{accountMessage}</p>}
-                  {planError && <p className="mb-2 text-xs text-[var(--danger)]">{planError}</p>}
+                      {settingsDetailSection === "data" ? (
+                        <div className="overflow-hidden rounded-md border border-[var(--border)]">
+                          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-xs">
+                            <div className="min-w-0">
+                              <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
+                                <Globe className="h-3.5 w-3.5" />
+                                {t("Sync", "동기화")}
+                              </span>
+                              <p className="mt-0.5 truncate text-[10px] text-[var(--muted)]">
+                                {!session
+                                  ? t("Login required for cloud sync.", "클라우드 동기화는 로그인 후 사용 가능합니다.")
+                                  : lastSyncAt
+                                    ? `${t("Last sync", "마지막 동기화")}: ${formatDateOrDash(lastSyncAt)}`
+                                    : t("No recent sync record.", "최근 동기화 기록이 없습니다.")}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={triggerManualSync}
+                              disabled={!session || isSyncing}
+                              className="shrink-0 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isSyncing ? t("Syncing...", "동기화 중...") : t("Sync now", "지금 동기화")}
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void exportBackupToJson()}
+                            className="flex w-full items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                          >
+                            <span className="inline-flex items-center gap-1.5">
+                              <Download className="h-3.5 w-3.5" />
+                              {t("Backup", "백업")}
+                            </span>
+                            <span className="text-[10px] text-[var(--muted)]">JSON</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={openRestorePicker}
+                            className="flex w-full items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                          >
+                            <span className="inline-flex items-center gap-1.5">
+                              <Upload className="h-3.5 w-3.5" />
+                              {t("Restore", "복원")}
+                            </span>
+                            <span className="text-[10px] text-[var(--muted)]">{t("From file", "파일에서")}</span>
+                          </button>
+                          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
+                            <span className="inline-flex items-center gap-1.5 text-xs text-[var(--ink)]">
+                              <Printer className="h-3.5 w-3.5" />
+                              {t("Export PDF", "PDF 내보내기")}
+                            </span>
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => exportCurrentViewToPdf("day")}
+                                className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                              >
+                                {t("Day", "일간")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => exportCurrentViewToPdf("week")}
+                                className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                              >
+                                {t("Week", "주간")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => exportCurrentViewToPdf("month")}
+                                className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                              >
+                                {t("Month", "월간")}
+                              </button>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => clearDeviceData()}
+                            className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger)]/5"
+                          >
+                            <span>{session ? t("Clear device data", "기기 로컬 데이터 삭제") : t("Clear local data", "로컬 데이터 삭제")}</span>
+                            <span className="text-[10px] text-[var(--muted)]">{t("Local only", "로컬만")}</span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </>
               ) : (
                 <>
@@ -2184,14 +2320,92 @@ export default function Home() {
                                   "자동 삭제 API가 없으므로 계정 삭제를 지원 요청 경로로 진행합니다."
                                 )}
                           </p>
-                          <button
-                            type="button"
-                            onClick={() => void requestDeleteAccount()}
-                            disabled={isAccountBusy}
-                            className="mt-2 w-full rounded-md border border-[var(--danger)]/60 px-3 py-2 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {isAccountBusy ? t("Requesting...", "요청 중…") : t("Request account deletion", "계정 삭제 요청")}
-                          </button>
+
+                          {/* Step 0: 삭제 시작 버튼 */}
+                          {deleteAccountStep === 0 && (
+                            <button
+                              type="button"
+                              onClick={() => startDeleteAccountFlow()}
+                              disabled={isAccountBusy}
+                              className="mt-2 w-full rounded-md border border-[var(--danger)]/60 px-3 py-2 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isAccountBusy ? t("Processing…", "처리 중…") : t("Delete Account", "계정 삭제")}
+                            </button>
+                          )}
+
+                          {/* Step 1: 첫 번째 경고 */}
+                          {deleteAccountStep === 1 && (
+                            <div className="mt-2 rounded-md border border-[var(--danger)]/50 bg-[var(--danger)]/5 p-3">
+                              <p className="mb-1 text-[11px] font-semibold text-[var(--danger)]">
+                                {t("Are you sure?", "정말 삭제하시겠습니까?")}
+                              </p>
+                              <p className="mb-3 text-[10px] leading-4 text-[var(--muted)]">
+                                {t(
+                                  "This will permanently delete your account and all associated data. This action cannot be undone.",
+                                  "계정과 관련된 모든 데이터가 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다."
+                                )}
+                              </p>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => cancelDeleteAccountFlow()}
+                                  className="flex-1 rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                >
+                                  {t("Cancel", "취소")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => advanceDeleteAccountStep()}
+                                  className="flex-1 rounded-md bg-[var(--danger)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                                >
+                                  {t("Yes, continue", "계속 진행")}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Step 2: "DELETE" 타이핑 최종 확인 */}
+                          {deleteAccountStep === 2 && (
+                            <div className="mt-2 rounded-md border border-[var(--danger)]/70 bg-[var(--danger)]/5 p-3">
+                              <p className="mb-1 text-[11px] font-semibold text-[var(--danger)]">
+                                {t("Final confirmation", "최종 확인")}
+                              </p>
+                              <p className="mb-2 text-[10px] leading-4 text-[var(--muted)]">
+                                {t(
+                                  'Type "DELETE" to confirm permanent account deletion.',
+                                  '"DELETE"를 입력하여 계정 영구 삭제를 확인해 주세요.'
+                                )}
+                              </p>
+                              <input
+                                type="text"
+                                value={deleteAccountInput}
+                                onChange={(e) => setDeleteAccountInput(e.target.value)}
+                                placeholder={t("Type DELETE", "DELETE 입력")}
+                                autoComplete="off"
+                                autoCorrect="off"
+                                spellCheck={false}
+                                className="mb-2 w-full rounded-md border border-[var(--danger)]/50 bg-transparent px-2 py-1.5 text-xs text-[var(--ink)] placeholder-[var(--muted)] focus:border-[var(--danger)] focus:outline-none"
+                              />
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => cancelDeleteAccountFlow()}
+                                  disabled={isAccountBusy}
+                                  className="flex-1 rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-50"
+                                >
+                                  {t("Cancel", "취소")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void requestDeleteAccount()}
+                                  disabled={isAccountBusy || deleteAccountInput.trim().toUpperCase() !== "DELETE"}
+                                  className="flex-1 rounded-md bg-[var(--danger)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {isAccountBusy ? t("Deleting…", "삭제 중…") : t("Delete my account", "계정 삭제")}
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

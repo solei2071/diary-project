@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAM_ID.com.dailyflow.diary",
+        "paths": [
+          "/",
+          "/auth/callback",
+          "/*"
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "TEAM_ID.com.dailyflow.diary"
+    ]
+  }
+}
