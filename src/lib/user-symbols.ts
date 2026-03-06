@@ -5,8 +5,8 @@
  */
 
 const STORAGE_KEY = "diary-user-symbols";
-const MAX_USER_SYMBOLS_FREE = 10;
-const MAX_USER_SYMBOLS_PRO = 40;
+const MAX_USER_SYMBOLS_FREE = 5;
+const MAX_USER_SYMBOLS_PRO = 20;
 const FREE_TOP_SUMMARY_SYMBOLS = 3;
 const PRO_TOP_SUMMARY_SYMBOLS = 10;
 
@@ -14,6 +14,7 @@ export type UserSymbolPlan = "free" | "pro";
 
 export type PlanFeatures = {
   symbolLimit: number;
+  dailyNoteLimit: number;
   topSummaryLimit: number;
   canExport: boolean;
   canSearch: boolean;
@@ -30,6 +31,7 @@ export type PlanLimits = {
 export const planFeatures: PlanLimits = {
   free: {
     symbolLimit: MAX_USER_SYMBOLS_FREE,
+    dailyNoteLimit: 1,
     topSummaryLimit: FREE_TOP_SUMMARY_SYMBOLS,
     canExport: false,
     canSearch: false,
@@ -40,6 +42,7 @@ export const planFeatures: PlanLimits = {
   },
   pro: {
     symbolLimit: MAX_USER_SYMBOLS_PRO,
+    dailyNoteLimit: 5,
     topSummaryLimit: PRO_TOP_SUMMARY_SYMBOLS,
     canExport: true,
     canSearch: true,

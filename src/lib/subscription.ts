@@ -201,6 +201,13 @@ const applyEntitlements = (plan: UserSymbolPlan, rows: UserEntitlementRow[]) => 
           }
           break;
         }
+        case "daily_note_limit": {
+          const nextValue = readFeatureLimit(row);
+          if (nextValue !== null && nextValue > 0) {
+            next.dailyNoteLimit = nextValue;
+          }
+          break;
+        }
         case "top_summary_limit": {
           const nextValue = readFeatureLimit(row);
           if (nextValue !== null && nextValue > 0) {

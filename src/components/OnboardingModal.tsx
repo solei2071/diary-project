@@ -9,24 +9,7 @@
 
 import { useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-
-const STORAGE_KEY = "diary-onboarding-done";
-
-export function hasCompletedOnboarding(): boolean {
-  try {
-    return typeof window !== "undefined" && Boolean(localStorage.getItem(STORAGE_KEY));
-  } catch {
-    return true;
-  }
-}
-
-export function markOnboardingDone() {
-  try {
-    localStorage.setItem(STORAGE_KEY, "1");
-  } catch {
-    // no-op
-  }
-}
+import { markOnboardingDone } from "@/lib/onboarding";
 
 type Step = {
   emoji: string;

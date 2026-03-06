@@ -11,6 +11,7 @@
  */
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent, MouseEvent, TouchEvent } from "react";
 import {
@@ -41,9 +42,10 @@ import {
   type UserSymbolPlan
 } from "@/lib/user-symbols";
 import type { UserSymbol } from "@/lib/user-symbols";
-import SymbolPicker from "./SymbolPicker";
-import SearchModal from "./SearchModal";
-import StatsModal from "./StatsModal";
+
+const SymbolPicker = dynamic(() => import("./SymbolPicker"), { ssr: false });
+const SearchModal = dynamic(() => import("./SearchModal"), { ssr: false });
+const StatsModal = dynamic(() => import("./StatsModal"), { ssr: false });
 
 /** Date → YYYY-MM-DD (로컬 기준. toISOString은 UTC라 한국 등에서 하루 밀림) */
 function toLocalDateString(date: Date): string {
@@ -54,9 +56,7 @@ function toLocalDateString(date: Date): string {
 }
 
 const initialDate = toLocalDateString(new Date());
-const NOTE_CHAR_LIMIT = 2000;
-const FREE_DAILY_NOTE_LIMIT = 3;
-const PRO_DAILY_NOTE_LIMIT = 10;
+const NOTE_CHAR_LIMIT = 1000;
 const JOURNAL_NOTES_PREFIX = "journal-notes-v2::";
 const TODO_REPEAT_DEFAULT_PLUS_DAYS = 14;
 const TODO_REPEAT_MAX_PLUS_DAYS = 365;
@@ -739,11 +739,12 @@ export default function DailyDiary({
   const currentMonth = selectedDate.slice(0, 7);
   const today = toLocalDateString(new Date());
   const symbolPlan = symbolPlanOverride ?? "free";
-  const dailyNoteLimit = symbolPlan === "pro" ? PRO_DAILY_NOTE_LIMIT : FREE_DAILY_NOTE_LIMIT;
   const planLimits = useMemo(
     () => planFeaturesOverride ?? getPlanLimits(symbolPlan),
     [symbolPlan, planFeaturesOverride]
   );
+  const dailyNoteLimit = planLimits.dailyNoteLimit;
+  const proDailyNoteLimit = getPlanLimits("pro").dailyNoteLimit;
   const symbolLimit = planLimits.symbolLimit;
   const orderedUserSymbols = useMemo(
     () => [...userSymbols].sort((a, b) => a.order - b.order),
@@ -2516,9 +2517,15 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
     if (journalNotes.length >= dailyNoteLimit) {
       setJournalError(
-        dailyNoteLimit === PRO_DAILY_NOTE_LIMIT
-          ? t("You can save up to 10 notes per day on Pro.", "Pro 요금제는 하루 최대 10개 노트까지 저장할 수 있습니다.")
-          : t("Free plan allows up to 3 notes per day. Upgrade to Pro for up to 10 notes.", "무료 플랜은 하루 최대 3개 노트까지 저장할 수 있습니다. Pro로 업그레이드하면 최대 10개까지 저장할 수 있습니다.")
+        dailyNoteLimit === proDailyNoteLimit
+          ? t(
+              `You can save up to ${proDailyNoteLimit} notes per day on Pro.`,
+              `Pro 요금제는 하루 최대 ${proDailyNoteLimit}개 노트까지 저장할 수 있습니다.`
+            )
+          : t(
+              `Free plan allows up to ${dailyNoteLimit} note${dailyNoteLimit === 1 ? "" : "s"} per day. Upgrade to Pro for up to ${proDailyNoteLimit} notes.`,
+              `무료 플랜은 하루 최대 ${dailyNoteLimit}개 노트까지 저장할 수 있습니다. Pro로 업그레이드하면 최대 ${proDailyNoteLimit}개까지 저장할 수 있습니다.`
+            )
       );
       return;
     }
@@ -3622,8 +3629,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     className="n-textarea"
                     placeholder={t("Write a note for today and tap Enter to save...", "오늘의 노트를 입력하고 Enter 버튼으로 저장해 주세요")}
                   />
-                  <p className="mt-1 text-right text-xs text-[var(--muted)]">
-                    {`${journalText.length}/${NOTE_CHAR_LIMIT}`}
+                  <p className={`mt-1 text-right text-xs ${journalText.length >= NOTE_CHAR_LIMIT ? "text-red-500 font-semibold" : journalText.length >= NOTE_CHAR_LIMIT * 0.9 ? "text-orange-400" : "text-[var(--muted)]"}`}>
+                    {journalText.length.toLocaleString()} / {NOTE_CHAR_LIMIT.toLocaleString()}
                   </p>
                 </div>
                 <div className="px-3 py-3">
@@ -3684,13 +3691,13 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     <ChevronRight className="h-2.5 w-2.5" />
                   </button>
                 </div>
-                <div className="flex flex-shrink-0 rounded-lg border border-[var(--border)] p-0.5">
+                <div className="flex flex-shrink-0 rounded-xl border border-[var(--border)] p-1">
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("week")}
-                    className={`px-1 py-0.5 text-center min-w-[1.75rem] text-[8px] font-medium rounded-md leading-4 transition-colors ${
+                    className={`px-3 py-2 text-center min-w-[3rem] text-sm font-semibold rounded-lg transition-colors ${
                       dashboardViewMode === "week"
-                        ? "bg-[var(--primary)] text-white"
+                        ? "bg-[var(--primary)] text-white shadow-sm"
                         : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
                     }`}
                   >
@@ -3699,9 +3706,9 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("month")}
-                    className={`px-1 py-0.5 text-center min-w-[1.75rem] text-[8px] font-medium rounded-md leading-4 transition-colors ${
+                    className={`px-3 py-2 text-center min-w-[3rem] text-sm font-semibold rounded-lg transition-colors ${
                       dashboardViewMode === "month"
-                        ? "bg-[var(--primary)] text-white"
+                        ? "bg-[var(--primary)] text-white shadow-sm"
                         : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
                     }`}
                   >

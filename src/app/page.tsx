@@ -6,13 +6,14 @@
  */
 "use client";
 
+import dynamic from "next/dynamic";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import AuthPanel from "@/components/AuthPanel";
 import DailyDiary from "@/components/DailyDiary";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { ToastProvider } from "@/components/Toast";
-import OnboardingModal, { hasCompletedOnboarding } from "@/components/OnboardingModal";
+import { hasCompletedOnboarding } from "@/lib/onboarding";
+import { initPurchases, purchaseProMonthly, restoreSubscription, isProActive, loginUser } from "@/lib/purchases";
 import {
   loadNotificationSettings,
   saveNotificationSettings,
@@ -69,6 +70,12 @@ import {
   type AppLockConfig
 } from "@/lib/app-lock";
 
+const AuthPanel = dynamic(() => import("@/components/AuthPanel"), { ssr: false });
+const OnboardingModal = dynamic(() => import("@/components/OnboardingModal"), { ssr: false });
+const ProUpgradeSheet = dynamic(() => import("@/components/ProUpgradeSheet"), { ssr: false });
+const PinSetupModal = dynamic(() => import("@/components/PinSetupModal"), { ssr: false });
+const TimePickerWheel = dynamic(() => import("@/components/TimePickerWheel"), { ssr: false });
+
 declare global {
   interface Window {
     webkit?: {
@@ -86,7 +93,7 @@ declare global {
 
 type AppLanguage = "en" | "ko";
 type FontStyle = "bold" | "clean" | "rounded";
-type SettingsDetailSection = "root" | "data" | "appearance" | "notifications" | "plan";
+type SettingsDetailSection = "root" | "data" | "appearance" | "notifications" | "security" | "plan";
 
 const LOCAL_DATA_STORAGE_KEYS = [
   "diary-draft-todos",
@@ -288,12 +295,16 @@ export default function Home() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [deleteAccountStep, setDeleteAccountStep] = useState<0 | 1 | 2>(0);
   const [deleteAccountInput, setDeleteAccountInput] = useState("");
+  const [showProUpgrade, setShowProUpgrade] = useState(false);
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [isPurchasing, setIsPurchasing] = useState(false);
   const lockAutoBiometricTriedRef = useRef(false);
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const hasAccountDeleteEndpoint = Boolean(ACCOUNT_DELETE_ENDPOINT);
 
   const isPro = symbolPlan === "pro";
   const checkoutUrl = process.env.NEXT_PUBLIC_PRO_CHECKOUT_URL?.trim();
+  const proPlanFeatures = getPlanLimits("pro");
   const accountProvider = session
     ? String(
         session.user.app_metadata?.provider ||
@@ -345,6 +356,11 @@ export default function Home() {
           await syncPlan(data.session);
           if (cancelled) return;
           setPlanError("");
+          // Initialize RevenueCat IAP SDK
+          void initPurchases(data.session?.user?.id ?? null);
+          if (data.session?.user?.id) {
+            void loginUser(data.session.user.id);
+          }
         } else {
           setPlanError(error.message ?? "");
         }
@@ -859,6 +875,63 @@ export default function Home() {
     setSecurityPasscodeConfirm("");
     setSecurityError("");
     setSecurityMessage("");
+  };
+
+  const handlePurchasePro = async () => {
+    setIsPurchasing(true);
+    try {
+      const result = await purchaseProMonthly();
+      if (result.ok) {
+        // Refresh plan state after purchase
+        if (session?.user) {
+          const info = await resolvePlanState(session.user);
+          setSymbolPlan(info.plan);
+          setPlanInfo(info);
+          setStoredPlan(info.plan, session.user.id);
+        }
+        setShowProUpgrade(false);
+      } else if (result.error && !result.error.includes("cancelled")) {
+        setPlanError(result.error);
+      }
+    } catch {
+      // silent on cancel
+    } finally {
+      setIsPurchasing(false);
+    }
+  };
+
+  const handleRestorePurchase = async () => {
+    setIsPurchasing(true);
+    try {
+      const result = await restoreSubscription();
+      if (result.ok && result.data) {
+        if (isProActive(result.data)) {
+          if (session?.user) {
+            const info = await resolvePlanState(session.user);
+            setSymbolPlan(info.plan);
+            setPlanInfo(info);
+            setStoredPlan(info.plan, session.user.id);
+          }
+          setShowProUpgrade(false);
+        }
+      }
+    } catch {
+      // silent
+    } finally {
+      setIsPurchasing(false);
+    }
+  };
+
+  const handlePinSet = (salt: string, hash: string) => {
+    applyLockConfig({
+      ...lockConfig,
+      usePasscode: true,
+      passcodeSalt: salt,
+      passcodeHash: hash,
+      enabled: true,
+    });
+    setShowPinSetup(false);
+    setSecurityMessage(t("PIN has been set.", "비밀번호가 설정되었습니다."));
   };
 
   const buildAccountDeletionDraft = () => {
@@ -1532,9 +1605,11 @@ export default function Home() {
         ? t("Appearance", "외관")
         : settingsDetailSection === "notifications"
           ? t("Notifications", "알림")
-          : settingsDetailSection === "plan"
-            ? t("Plan", "플랜")
-            : t("Settings", "설정");
+          : settingsDetailSection === "security"
+            ? t("Security", "보안")
+            : settingsDetailSection === "plan"
+              ? t("Plan", "플랜")
+              : t("Settings", "설정");
   // 세션 로드 전에는 로딩 UI 표시
   if (!ready) {
     return <main className="min-h-screen flex items-center justify-center">{t("Loading...", "불러오는 중…")}</main>;
@@ -1543,23 +1618,23 @@ export default function Home() {
   return (
       <ToastProvider appLanguage={appLanguage}>
     <div className="relative">
-      {/* 상단 고정 헤더 — 우측 상단 톱니바퀴 아이콘만 표시 */}
+      {/* 상단 고정 헤더 — 우측 상단 톱니바퀴 아이콘 (스크롤과 무관하게 항상 고정, PRD-008) */}
       <section
-        className="sticky top-0 z-40"
-        style={{ paddingTop: "var(--safe-top)" }}
+        className="fixed top-0 right-0 left-0 z-50"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
         <div className="relative mx-auto flex w-full max-w-[430px] items-center justify-end px-4 py-2 lg:max-w-5xl">
-          {/* 설정 버튼 (톱니바퀴) */}
+          {/* 설정 버튼 (톱니바퀴) — 44x44 터치 영역 확보 (PRD-007) */}
           <button
             onClick={() => setIsSettingsOpen((prev) => !prev)}
-            className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
+            className={`flex h-11 w-11 items-center justify-center rounded-full shadow-sm backdrop-blur-sm transition-colors ${
               isSettingsOpen
                 ? "bg-[var(--primary)] text-white"
-                : "text-[var(--muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
+                : "bg-[var(--bg)]/80 text-[var(--muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
             }`}
             aria-label={t("Settings", "설정")}
           >
-            <Settings className="h-4 w-4" />
+            <Settings className="h-[22px] w-[22px]" />
           </button>
           {isSettingsOpen ? (
             <div
@@ -1654,10 +1729,33 @@ export default function Home() {
                             {t("Notifications", "알림")}
                           </span>
                           <span className="mt-0.5 block text-[10px] text-[var(--muted)]">
-                            {t("Reminder and security lock", "리마인더 및 보안 잠금")}
+                            {t("Daily reminder settings", "일일 리마인더 설정")}
                           </span>
                         </span>
                         <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSettingsDetailSection("security")}
+                        className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-2.5 py-2 text-left hover:bg-[var(--bg-hover)]"
+                      >
+                        <span className="min-w-0">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ink)]">
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                            {t("Security", "보안")}
+                          </span>
+                          <span className="mt-0.5 block text-[10px] text-[var(--muted)]">
+                            {t("PIN, app lock, biometric", "PIN, 앱 잠금, 생체인증")}
+                          </span>
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {lockConfig.enabled && (
+                            <span className="rounded-full bg-[var(--primary)]/15 px-1.5 py-0.5 text-[9px] font-semibold text-[var(--primary)]">
+                              {t("On", "켜짐")}
+                            </span>
+                          )}
+                          <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                        </div>
                       </button>
                       <button
                         type="button"
@@ -1781,150 +1879,150 @@ export default function Home() {
                                   </button>
                                 </div>
                                 {notifSettings.enabled && (
-                                  <div className="mt-2 flex items-center gap-2">
-                                    <span className="text-[11px] text-[var(--muted)]">{t("Time", "시간")}</span>
-                                    <input
-                                      type="time"
+                                  <div className="mt-3">
+                                    <TimePickerWheel
                                       value={notifSettings.reminderTime}
-                                      onChange={(e) => handleNotifTimeChange(e.target.value)}
-                                      className="n-input h-7 px-2 py-1 text-xs"
+                                      onChange={handleNotifTimeChange}
+                                      appLanguage={appLanguage}
                                     />
                                   </div>
                                 )}
-                                <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
+                                <p className="mt-2 text-[10px] leading-4 text-[var(--muted)]">
                                   {t("Shows a reminder to record your day at the set time.", "설정한 시간에 오늘 기록을 남기도록 리마인더를 표시합니다.")}
                                 </p>
                               </>
                             )}
                           </div>
-                          <details className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
-                            <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-2 text-xs font-semibold text-[var(--ink)]">
-                              <span>{t("Security lock", "보안 잠금")}</span>
-                              {lockConfig.enabled ? (
-                                <span className="rounded-full bg-[var(--primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--primary)]">
-                                  {t("On", "켜짐")}
-                                </span>
-                              ) : (
-                                <span className="rounded-full bg-[var(--bg-hover)] px-2 py-0.5 text-[10px] font-semibold text-[var(--muted)]">
-                                  {t("Off", "꺼짐")}
-                                </span>
-                              )}
-                            </summary>
-                            <div className="border-t border-[var(--border)] p-2">
-                              <p className="mb-2 text-[11px] leading-5 text-[var(--muted)]">
-                                {t(
-                                  "Protect app access with Face ID/Touch ID and/or a local app passcode.",
-                                  "Face ID/Touch ID 또는 로컬 앱 비밀번호로 앱 접근을 보호합니다."
-                                )}
-                              </p>
-                              <div className="mb-2 flex gap-2">
-                                {lockConfig.enabled ? (
-                                  <button
-                                    type="button"
-                                    onClick={disableAppLock}
-                                    className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                                  >
-                                    {t("Disable lock", "잠금 끄기")}
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={enableAppLock}
-                                    disabled={!hasSecurityMethod}
-                                    className="flex-1 rounded-md bg-[var(--primary)] px-2 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                                  >
-                                    {t("Enable lock", "잠금 켜기")}
-                                  </button>
-                                )}
-                                {lockConfig.enabled ? (
-                                  <button
-                                    type="button"
-                                    onClick={lockNow}
-                                    className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                                  >
-                                    {t("Lock now", "지금 잠그기")}
-                                  </button>
-                                ) : null}
-                              </div>
+                        </>
+                      ) : null}
 
-                              <div className="rounded-md border border-[var(--border)] p-2">
-                                <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
-                                  <Fingerprint className="h-3.5 w-3.5" />
-                                  {t("Face ID / Touch ID", "Face ID / Touch ID")}
-                                </p>
-                                <p className="mb-2 text-[10px] leading-4 text-[var(--muted)]">
-                                  {biometricSupported
-                                    ? t("Uses this device's built-in biometric prompt.", "이 기기의 생체 인증 프롬프트를 사용합니다.")
-                                    : t("Biometric API is unavailable in this browser.", "이 브라우저에서는 생체 인증 API를 사용할 수 없습니다.")}
-                                </p>
-                                {lockConfig.useBiometric ? (
-                                  <button
-                                    type="button"
-                                    onClick={removeBiometricLock}
-                                    disabled={isSecurityBusy}
-                                    className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
-                                  >
-                                    {t("Remove biometric lock", "생체 인증 잠금 해제")}
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => void setupBiometricLock()}
-                                    disabled={!biometricSupported || isSecurityBusy}
-                                    className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-                                  >
-                                    {isSecurityBusy ? t("Setting up...", "설정 중...") : t("Set up biometric lock", "생체 인증 잠금 설정")}
-                                  </button>
-                                )}
-                              </div>
-
-                              <div className="mt-2 rounded-md border border-[var(--border)] p-2">
-                                <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
-                                  <Lock className="h-3.5 w-3.5" />
-                                  {t("App passcode", "앱 비밀번호")}
-                                </p>
-                                <input
-                                  value={securityPasscode}
-                                  onChange={(e) => setSecurityPasscode(e.target.value)}
-                                  type="password"
-                                  className="n-input mb-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
-                                  placeholder={t("Enter app passcode", "앱 비밀번호 입력")}
-                                  autoComplete="new-password"
-                                />
-                                <input
-                                  value={securityPasscodeConfirm}
-                                  onChange={(e) => setSecurityPasscodeConfirm(e.target.value)}
-                                  type="password"
-                                  className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
-                                  placeholder={t("Confirm app passcode", "앱 비밀번호 확인")}
-                                  autoComplete="new-password"
-                                />
-                                <div className="mt-2 flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => void saveAppPasscode()}
-                                    disabled={isSecurityBusy}
-                                    className="flex-1 rounded-md bg-[var(--primary)] px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                                  >
-                                    {lockConfig.usePasscode ? t("Update passcode", "비밀번호 변경") : t("Set passcode", "비밀번호 설정")}
-                                  </button>
-                                  {lockConfig.usePasscode ? (
-                                    <button
-                                      type="button"
-                                      onClick={removeAppPasscode}
-                                      disabled={isSecurityBusy}
-                                      className="flex-1 rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
-                                    >
-                                      {t("Remove passcode", "비밀번호 삭제")}
-                                    </button>
-                                  ) : null}
+                      {settingsDetailSection === "security" ? (
+                        <>
+                          <div className="space-y-2">
+                            {/* PIN Setup */}
+                            <div className="rounded-md border border-[var(--border)] p-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="flex items-center gap-1.5 text-xs font-semibold text-[var(--ink)]">
+                                    <KeyRound className="h-3.5 w-3.5" />
+                                    {t("App PIN", "앱 비밀번호 설정")}
+                                  </p>
+                                  <p className="mt-0.5 text-[10px] text-[var(--muted)]">
+                                    {lockConfig.usePasscode
+                                      ? t("PIN is set. Tap to change.", "비밀번호 설정됨. 탭하여 변경.")
+                                      : t("Set a 4-digit PIN to lock the app.", "4자리 PIN으로 앱을 잠급니다.")}
+                                  </p>
                                 </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPinSetup(true)}
+                                  className="shrink-0 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                >
+                                  {lockConfig.usePasscode ? t("Change", "변경") : t("Set", "설정")}
+                                </button>
                               </div>
-
-                              {securityError ? <p className="mt-2 text-[11px] text-[var(--danger)]">{securityError}</p> : null}
-                              {securityMessage ? <p className="mt-2 text-[11px] text-[var(--success)]">{securityMessage}</p> : null}
+                              {lockConfig.usePasscode && (
+                                <button
+                                  type="button"
+                                  onClick={removeAppPasscode}
+                                  disabled={isSecurityBusy}
+                                  className="mt-2 w-full rounded-md border border-[var(--danger)]/30 px-2 py-1.5 text-[10px] font-semibold text-[var(--danger)] hover:bg-[var(--danger)]/5 disabled:opacity-60"
+                                >
+                                  {t("Remove PIN", "비밀번호 삭제")}
+                                </button>
+                              )}
                             </div>
-                          </details>
+
+                            {/* App Lock Toggle — PRO only */}
+                            <div className="rounded-md border border-[var(--border)] p-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="flex items-center gap-1.5 text-xs font-semibold text-[var(--ink)]">
+                                    <Lock className="h-3.5 w-3.5" />
+                                    {t("App lock", "앱 잠금")}
+                                    {!isPro && <span className="text-[10px] text-amber-500">PRO</span>}
+                                  </p>
+                                  <p className="mt-0.5 text-[10px] text-[var(--muted)]">
+                                    {t("Lock app when returning from background.", "백그라운드에서 돌아올 때 앱을 잠급니다.")}
+                                  </p>
+                                </div>
+                                {isPro ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => lockConfig.enabled ? disableAppLock() : enableAppLock()}
+                                    disabled={!hasSecurityMethod}
+                                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${lockConfig.enabled ? "bg-[var(--primary)]" : "bg-[var(--border-strong)]"} disabled:cursor-not-allowed disabled:opacity-50`}
+                                    role="switch"
+                                    aria-checked={lockConfig.enabled}
+                                  >
+                                    <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${lockConfig.enabled ? "translate-x-4" : "translate-x-0"}`} />
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowProUpgrade(true)}
+                                    className="shrink-0 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-600 hover:bg-amber-100"
+                                  >
+                                    {t("Upgrade", "업그레이드")}
+                                  </button>
+                                )}
+                              </div>
+                              {lockConfig.enabled && isPro && (
+                                <button
+                                  type="button"
+                                  onClick={lockNow}
+                                  className="mt-2 w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                >
+                                  {t("Lock now", "지금 잠그기")}
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Biometric */}
+                            <div className="rounded-md border border-[var(--border)] p-2">
+                              <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-[var(--ink)]">
+                                <Fingerprint className="h-3.5 w-3.5" />
+                                {t("Face ID / Touch ID", "Face ID / Touch ID")}
+                              </p>
+                              <p className="mb-2 text-[10px] leading-4 text-[var(--muted)]">
+                                {biometricSupported
+                                  ? t("Uses this device's built-in biometric prompt.", "이 기기의 생체 인증 프롬프트를 사용합니다.")
+                                  : t("Biometric API is unavailable in this browser.", "이 브라우저에서는 생체 인증 API를 사용할 수 없습니다.")}
+                              </p>
+                              {lockConfig.useBiometric ? (
+                                <button
+                                  type="button"
+                                  onClick={removeBiometricLock}
+                                  disabled={isSecurityBusy}
+                                  className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
+                                >
+                                  {t("Remove biometric lock", "생체 인증 잠금 해제")}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => void setupBiometricLock()}
+                                  disabled={!biometricSupported || isSecurityBusy}
+                                  className="w-full rounded-md border border-[var(--border)] px-2 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {isSecurityBusy ? t("Setting up...", "설정 중...") : t("Set up biometric lock", "생체 인증 잠금 설정")}
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Restore subscription in security section */}
+                            <button
+                              type="button"
+                              onClick={() => void handleRestorePurchase()}
+                              disabled={isPurchasing}
+                              className="w-full rounded-md border border-[var(--border)] px-2.5 py-2 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)] disabled:opacity-60"
+                            >
+                              {isPurchasing ? t("Restoring...", "복원 중...") : t("Restore subscription", "구독 복원하기")}
+                            </button>
+
+                            {securityError ? <p className="text-[11px] text-[var(--danger)]">{securityError}</p> : null}
+                            {securityMessage ? <p className="text-[11px] text-[var(--success)]">{securityMessage}</p> : null}
+                          </div>
                         </>
                       ) : null}
 
@@ -1942,18 +2040,21 @@ export default function Home() {
                               )}
                             </div>
                             <p className="text-[11px] leading-5 text-[var(--muted)]">
-                              {t("Symbol limit", "심볼 제한")}: {isPro ? 40 : 10}
+                              {t("Symbol limit", "심볼 제한")}: {planInfo.features.symbolLimit}
                             </p>
                             {isPro ? null : (
                               <>
                                 <button
-                                  onClick={() => void startUnlockCheckout()}
+                                  onClick={() => { closeSettings(); setShowProUpgrade(true); }}
                                   className="mt-2 w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white"
                                 >
                                   {t("Unlock Pro", "Pro 잠금 해제")}
                                 </button>
                                 <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
-                                  {t("Unlock Pro to remove ads.", "Pro로 업그레이드하면 광고를 제거할 수 있습니다.")}
+                                  {t(
+                                    `Unlock all features: ${proPlanFeatures.symbolLimit} emojis, ${proPlanFeatures.dailyNoteLimit} notes, app lock, data export.`,
+                                    `모든 기능 잠금 해제: 이모지 ${proPlanFeatures.symbolLimit}개, 노트 ${proPlanFeatures.dailyNoteLimit}개, 앱 잠금, 데이터 내보내기.`
+                                  )}
                                 </p>
                               </>
                             )}
@@ -2027,31 +2128,42 @@ export default function Home() {
                           <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
                             <span className="inline-flex items-center gap-1.5 text-xs text-[var(--ink)]">
                               <Printer className="h-3.5 w-3.5" />
-                              {t("Export PDF", "PDF 내보내기")}
+                              {t("Export", "데이터 내보내기")}
+                              {!isPro && <span className="text-[10px] text-amber-500">PRO</span>}
                             </span>
-                            <div className="flex gap-1">
+                            {isPro ? (
+                              <div className="flex gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => exportCurrentViewToPdf("day")}
+                                  className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                >
+                                  {t("Day", "일간")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => exportCurrentViewToPdf("week")}
+                                  className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                >
+                                  {t("Week", "주간")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => exportCurrentViewToPdf("month")}
+                                  className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                >
+                                  {t("Month", "월간")}
+                                </button>
+                              </div>
+                            ) : (
                               <button
                                 type="button"
-                                onClick={() => exportCurrentViewToPdf("day")}
-                                className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                                onClick={() => { closeSettings(); setShowProUpgrade(true); }}
+                                className="shrink-0 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-600 hover:bg-amber-100"
                               >
-                                {t("Day", "일간")}
+                                {t("Upgrade", "업그레이드")}
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => exportCurrentViewToPdf("week")}
-                                className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                              >
-                                {t("Week", "주간")}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => exportCurrentViewToPdf("month")}
-                                className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                              >
-                                {t("Month", "월간")}
-                              </button>
-                            </div>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -2193,7 +2305,8 @@ export default function Home() {
                           <p className="mb-1 font-semibold text-[var(--ink)]">{t("Plan features", "플랜 기능")}</p>
                           <p>{t("Symbol limit", "심볼 제한")}: {planInfo.features.symbolLimit}</p>
                           <p>{t("Top symbols in summary", "요약 표시 심볼 개수")}: {planInfo.features.topSummaryLimit}</p>
-                          <p>{t("Export", "내보내기")}: {planInfo.features.canExport ? t("Admin page only", "관리자 전용") : t("Unavailable", "사용 불가")}</p>
+                          <p>{t("Notes per day", "일일 노트 개수")}: {planInfo.features.dailyNoteLimit}</p>
+                          <p>{t("Export", "내보내기")}: {planInfo.features.canExport ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
                           <p>{t("Search", "검색")}: {planInfo.features.canSearch ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
                           <p>{t("Templates", "템플릿")}: {planInfo.features.canTemplates ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
                           <p>{t("Todo repeat", "할 일 반복")}: {planInfo.features.canTodoRepeat ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
@@ -2445,6 +2558,7 @@ export default function Home() {
         </div>
       </section>
       {/* 메인 다이어리 컴포넌트 — session 전달, 비로그인 시 저장 요청 시 onRequestAuth 콜백 */}
+      <div style={{ paddingTop: "calc(env(safe-area-inset-top) + 3.5rem)" }}>
       <ErrorBoundary>
         <DailyDiary
           session={session}
@@ -2454,6 +2568,7 @@ export default function Home() {
           appLanguage={appLanguage}
         />
       </ErrorBoundary>
+      </div>
       {isAppLocked ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 px-4 py-6 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 shadow-xl">
@@ -2513,6 +2628,27 @@ export default function Home() {
           </div>
         </div>
       ) : null}
+      {/* PRO 업그레이드 바텀시트 */}
+      <ProUpgradeSheet
+        visible={showProUpgrade}
+        onClose={() => setShowProUpgrade(false)}
+        onSubscribe={() => void handlePurchasePro()}
+        onRestore={() => void handleRestorePurchase()}
+        appLanguage={appLanguage}
+        isLoading={isPurchasing}
+      />
+
+      {/* PIN 설정 모달 */}
+      <PinSetupModal
+        visible={showPinSetup}
+        onClose={() => setShowPinSetup(false)}
+        onPinSet={handlePinSet}
+        requireCurrentPin={lockConfig.usePasscode}
+        currentSalt={lockConfig.passcodeSalt}
+        currentHash={lockConfig.passcodeHash}
+        appLanguage={appLanguage}
+      />
+
       {/* 로그인/회원가입 모달 — authMode가 설정되어 있고 비로그인일 때만 표시 */}
       {authMode && !session && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur">

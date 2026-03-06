@@ -544,6 +544,31 @@ textarea {
   }
 }
 
+/* ─── ProUpgradeSheet slide-up animation ─────────────── */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0.5;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out forwards;
+}
+
+/* ─── Time Picker wheel: hide scrollbar ──────────────── */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* ─── Symbol Picker ────────────────────────────────────── */
 .n-emoji-grid {
   display: grid;
