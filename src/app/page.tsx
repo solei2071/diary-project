@@ -32,6 +32,7 @@ import {
   Bell,
   Fingerprint,
   Globe,
+  House,
   KeyRound,
   Lock,
   Moon,
@@ -94,6 +95,7 @@ declare global {
 type AppLanguage = "en" | "ko";
 type FontStyle = "bold" | "clean" | "rounded";
 type SettingsDetailSection = "root" | "data" | "appearance" | "notifications" | "security" | "plan";
+type HeaderDiaryTab = "home" | "activity" | "notes" | "todo" | "dashboard";
 
 const LOCAL_DATA_STORAGE_KEYS = [
   "diary-draft-todos",
@@ -295,9 +297,11 @@ export default function Home() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [deleteAccountStep, setDeleteAccountStep] = useState<0 | 1 | 2>(0);
   const [deleteAccountInput, setDeleteAccountInput] = useState("");
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [showProUpgrade, setShowProUpgrade] = useState(false);
   const [showPinSetup, setShowPinSetup] = useState(false);
   const [isPurchasing, setIsPurchasing] = useState(false);
+  const [activeDiaryTab, setActiveDiaryTab] = useState<HeaderDiaryTab>("dashboard");
   const lockAutoBiometricTriedRef = useRef(false);
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const hasAccountDeleteEndpoint = Boolean(ACCOUNT_DELETE_ENDPOINT);
@@ -490,9 +494,30 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleActiveTab = (event: Event) => {
+      const custom = event as CustomEvent<{ tab?: HeaderDiaryTab }>;
+      const nextTab = custom.detail?.tab;
+      if (!nextTab) return;
+      setActiveDiaryTab(nextTab);
+    };
+
+    window.addEventListener("diary:active-tab", handleActiveTab);
+    return () => {
+      window.removeEventListener("diary:active-tab", handleActiveTab);
+    };
+  }, []);
+
   const closeSettings = () => {
     setIsSettingsOpen(false);
     setSettingsDetailSection("root");
+  };
+  const openHomeTab = () => {
+    if (typeof window === "undefined") return;
+    closeSettings();
+    window.dispatchEvent(new CustomEvent("diary:set-tab", { detail: { tab: "home" as HeaderDiaryTab } }));
   };
   const signOut = async () => {
     const userId = session?.user?.id ?? null;
@@ -508,44 +533,42 @@ export default function Home() {
   };
 
   const clearDeviceData = () => {
-    const confirmMessage = isKorean
+    const message = isKorean
       ? "이 기기의 로컬 데이터를 삭제할까요? 이 작업은 되돌릴 수 없습니다."
       : "Delete local data stored on this device? This action cannot be undone.";
-
-    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
-
-    if (session?.user) {
-      clearStoredPlan(session.user.id);
-    }
-    clearStoredPlan();
-    clearLocalDiaryData(session?.user?.id);
-    setLastSyncAt(null);
-    resetAppLockConfig();
-    setLockConfig(DEFAULT_APP_LOCK_CONFIG);
-    setIsAppLocked(false);
-    setLockScreenPasscode("");
-    setLockScreenError("");
-    setSecurityPasscode("");
-    setSecurityPasscodeConfirm("");
-    setSecurityError("");
-    setSecurityMessage("");
-    emitLocalDataCleared();
-    setAccountMessage(
-      t(
-        "Local data on this device has been cleared.",
-        "이 기기의 로컬 데이터가 삭제되었습니다."
-      )
-    );
-    setAccountError("");
+    setConfirmDialog({
+      message,
+      onConfirm: () => {
+        if (session?.user) clearStoredPlan(session.user.id);
+        clearStoredPlan();
+        clearLocalDiaryData(session?.user?.id);
+        setLastSyncAt(null);
+        resetAppLockConfig();
+        setLockConfig(DEFAULT_APP_LOCK_CONFIG);
+        setIsAppLocked(false);
+        setLockScreenPasscode("");
+        setLockScreenError("");
+        setSecurityPasscode("");
+        setSecurityPasscodeConfirm("");
+        setSecurityError("");
+        setSecurityMessage("");
+        emitLocalDataCleared();
+        setAccountMessage(t("Local data on this device has been cleared.", "이 기기의 로컬 데이터가 삭제되었습니다."));
+        setAccountError("");
+      }
+    });
   };
 
-  const deleteCloudData = async () => {
+  const deleteCloudData = () => {
     if (!session?.user) return;
-    const confirmMessage = isKorean
+    const message = isKorean
       ? "클라우드(서버) 데이터(할 일/노트/활동)를 삭제할까요? 구독 상태도 초기화되며 이 작업은 되돌릴 수 없습니다."
       : "Delete all cloud data (todos, notes, activities) and subscription info? This action cannot be undone.";
-    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
+    setConfirmDialog({ message, onConfirm: () => void executeDeleteCloudData() });
+  };
 
+  const executeDeleteCloudData = async () => {
+    if (!session?.user) return;
     setIsAccountBusy(true);
     setAccountError("");
     setAccountMessage("");
@@ -704,19 +727,14 @@ export default function Home() {
   };
 
   const removeBiometricLock = () => {
-    const confirmMessage = t(
-      "Remove biometric unlock for this device?",
-      "이 기기의 생체 인증 잠금을 해제할까요?"
-    );
-    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
-    applyLockConfig({
-      ...lockConfig,
-      useBiometric: false,
-      biometricCredentialId: null,
-      enabled: lockConfig.usePasscode
+    setConfirmDialog({
+      message: t("Remove biometric unlock for this device?", "이 기기의 생체 인증 잠금을 해제할까요?"),
+      onConfirm: () => {
+        applyLockConfig({ ...lockConfig, useBiometric: false, biometricCredentialId: null, enabled: lockConfig.usePasscode });
+        setSecurityError("");
+        setSecurityMessage(t("Biometric unlock removed.", "생체 인증 잠금이 해제되었습니다."));
+      }
     });
-    setSecurityError("");
-    setSecurityMessage(t("Biometric unlock removed.", "생체 인증 잠금이 해제되었습니다."));
   };
 
   const saveAppPasscode = async () => {
@@ -759,22 +777,16 @@ export default function Home() {
   };
 
   const removeAppPasscode = () => {
-    const confirmMessage = t(
-      "Remove app passcode for this device?",
-      "이 기기의 앱 비밀번호를 삭제할까요?"
-    );
-    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
-    applyLockConfig({
-      ...lockConfig,
-      usePasscode: false,
-      passcodeSalt: null,
-      passcodeHash: null,
-      enabled: lockConfig.useBiometric
+    setConfirmDialog({
+      message: t("Remove app passcode for this device?", "이 기기의 앱 비밀번호를 삭제할까요?"),
+      onConfirm: () => {
+        applyLockConfig({ ...lockConfig, usePasscode: false, passcodeSalt: null, passcodeHash: null, enabled: lockConfig.useBiometric });
+        setSecurityPasscode("");
+        setSecurityPasscodeConfirm("");
+        setSecurityError("");
+        setSecurityMessage(t("App passcode removed.", "앱 비밀번호가 삭제되었습니다."));
+      }
     });
-    setSecurityPasscode("");
-    setSecurityPasscodeConfirm("");
-    setSecurityError("");
-    setSecurityMessage(t("App passcode removed.", "앱 비밀번호가 삭제되었습니다."));
   };
 
   const enableAppLock = () => {
@@ -861,20 +873,23 @@ export default function Home() {
   };
 
   const resetAppLockOnDevice = () => {
-    const confirmMessage = t(
-      "Reset app lock on this device? This removes local lock settings only.",
-      "이 기기의 앱 잠금을 초기화할까요? 로컬 잠금 설정만 삭제됩니다."
-    );
-    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
-    resetAppLockConfig();
-    setLockConfig(DEFAULT_APP_LOCK_CONFIG);
-    setIsAppLocked(false);
-    setLockScreenPasscode("");
-    setLockScreenError("");
-    setSecurityPasscode("");
-    setSecurityPasscodeConfirm("");
-    setSecurityError("");
-    setSecurityMessage("");
+    setConfirmDialog({
+      message: t(
+        "Reset app lock on this device? This removes local lock settings only.",
+        "이 기기의 앱 잠금을 초기화할까요? 로컬 잠금 설정만 삭제됩니다."
+      ),
+      onConfirm: () => {
+        resetAppLockConfig();
+        setLockConfig(DEFAULT_APP_LOCK_CONFIG);
+        setIsAppLocked(false);
+        setLockScreenPasscode("");
+        setLockScreenError("");
+        setSecurityPasscode("");
+        setSecurityPasscodeConfirm("");
+        setSecurityError("");
+        setSecurityMessage("");
+      }
+    });
   };
 
   const handlePurchasePro = async () => {
@@ -1623,7 +1638,18 @@ export default function Home() {
         className="fixed top-0 right-0 left-0 z-50"
         style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
-        <div className="relative mx-auto flex w-full max-w-[430px] items-center justify-end px-4 py-2 lg:max-w-5xl">
+        <div className="relative mx-auto flex w-full max-w-[430px] items-center justify-between px-4 py-2 lg:max-w-5xl">
+          <button
+            onClick={openHomeTab}
+            className={`flex h-11 w-11 items-center justify-center rounded-full shadow-sm backdrop-blur-sm transition-colors ${
+              activeDiaryTab === "home"
+                ? "bg-[var(--primary-hover)] text-white"
+                : "bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]"
+            }`}
+            aria-label={t("Home", "홈")}
+          >
+            <House className="h-[22px] w-[22px]" />
+          </button>
           {/* 설정 버튼 (톱니바퀴) — 44x44 터치 영역 확보 (PRD-007) */}
           <button
             onClick={() => setIsSettingsOpen((prev) => !prev)}
@@ -2548,6 +2574,30 @@ export default function Home() {
               ) : null}
             </div>
           ) : null}
+          {/* Generic confirm dialog — replaces window.confirm() throughout settings */}
+          {confirmDialog && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
+              <div className="w-full max-w-xs rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 shadow-2xl">
+                <p className="mb-4 text-sm leading-relaxed text-[var(--ink)]">{confirmDialog.message}</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDialog(null)}
+                    className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                  >
+                    {t("Cancel", "취소")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
+                    className="flex-1 rounded-lg bg-[var(--danger)] px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
+                  >
+                    {t("Confirm", "확인")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {isSettingsOpen ? (
             <button
               onClick={() => setIsSettingsOpen(false)}

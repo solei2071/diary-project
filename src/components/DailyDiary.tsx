@@ -323,7 +323,7 @@ type SyncConflictState = {
   date: string;
 };
 
-type DiaryTab = "todo" | "activity" | "dashboard" | "notes";
+type DiaryTab = "home" | "todo" | "activity" | "dashboard" | "notes";
 type PdfRange = "day" | "week" | "month";
 
 type Props = {
@@ -681,11 +681,11 @@ export default function DailyDiary({
   const [todoRepeatPlusDays, setTodoRepeatPlusDays] = useState<number>(TODO_REPEAT_DEFAULT_PLUS_DAYS);
   const [isTodoRepeatSettingsOpen, setIsTodoRepeatSettingsOpen] = useState(false);
   const [activityConflictWarnings, setActivityConflictWarnings] = useState<Record<string, string>>({});
-  const diaryTabs: { id: DiaryTab; label: string; icon: typeof ListTodo; compactLabel?: string }[] = [
-    { id: "dashboard", label: t("Dashboard", "대시보드"), compactLabel: t("dash", "대시"), icon: LayoutDashboard },
+  const diaryTabs: { id: Exclude<DiaryTab, "home">; label: string; icon: typeof ListTodo; compactLabel?: string }[] = [
     { id: "activity", label: t("Activity", "활동"), compactLabel: t("activity", "활동"), icon: Clock3 },
     { id: "notes", label: t("Notes", "노트"), icon: FileText },
-    { id: "todo", label: t("To-do", "할 일"), icon: ListTodo }
+    { id: "todo", label: t("To-do", "할 일"), icon: ListTodo },
+    { id: "dashboard", label: t("Dashboard", "대시보드"), compactLabel: t("dash", "대시"), icon: LayoutDashboard }
   ];
   const activityListRef = useRef<HTMLDivElement | null>(null);
   const activityTrashRef = useRef<HTMLDivElement | null>(null);
@@ -759,7 +759,7 @@ export default function DailyDiary({
   const canTodoRepeat = planLimits.canTodoRepeat;
   const appLocale = getLocale(isKorean);
   const weekdayLabels = getWeekdayLabels(isKorean);
-  const diaryTabOrder: DiaryTab[] = ["dashboard", "activity", "notes", "todo"];
+  const diaryTabOrder: DiaryTab[] = ["home", "activity", "notes", "todo", "dashboard"];
   const [tabSwipeOffset, setTabSwipeOffset] = useState(0);
   const tabSwipeStartRef = useRef<{
     startX: number;
@@ -839,6 +839,31 @@ export default function DailyDiary({
     }
     setTabSwipeOffset(0);
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    window.dispatchEvent(new CustomEvent("diary:active-tab", { detail: { tab: activeDiaryTab } }));
+  }, [activeDiaryTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleExternalTabChange = (event: Event) => {
+      const custom = event as CustomEvent<{ tab?: DiaryTab }>;
+      const nextTab = custom.detail?.tab;
+      if (!nextTab) return;
+      setActiveDiaryTab(nextTab);
+      if (nextTab === "home") {
+        setSelectedDate(today);
+      }
+    };
+
+    window.addEventListener("diary:set-tab", handleExternalTabChange);
+    return () => {
+      window.removeEventListener("diary:set-tab", handleExternalTabChange);
+    };
+  }, [today]);
   const selectedDateRef = useRef(selectedDate);
   const ACTIVITY_SWIPE_THRESHOLD = 84;
   const ACTIVITY_SWIPE_MAX = 120;
@@ -2902,121 +2927,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
       ) : null}
 
         {/* ── Main Layout: Sidebar + Content ── */}
-      <div className="flex flex-1 flex-col gap-4 pt-4 lg:flex-row lg:items-start">
-
-        {/* ── Left Sidebar: Calendar + Monthly Flow ── */}
-        {activeDiaryTab === "dashboard" ? (
-          <aside className="w-full shrink-0 lg:sticky lg:top-6 lg:w-60">
-          {/* Activity summary (read-only) */}
-          <div className="fade-up rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-3 shadow-sm">
-            <p className="mb-1 text-xs leading-5 font-medium text-[var(--ink)]">{t("Today's activity summary", "오늘의 활동 요약")}</p>
-            {activities.length === 0 ? (
-              <p className="break-words text-xs leading-5 text-[var(--ink)]">{t("No records yet", "아직 기록이 없습니다.")}</p>
-            ) : (
-              <div className="grid gap-1 max-h-56 overflow-y-auto pr-1">
-                {activities
-                  .slice()
-                  .sort((a, b) => a.emoji.localeCompare(b.emoji))
-                  .map((activity) => (
-                    <div
-                      key={`${activity.emoji}-${activity.id ?? "no-id"}`}
-                      className="min-w-0 grid items-start gap-2 text-xs leading-5 text-[var(--ink)]"
-                      style={{ gridTemplateColumns: "1.25rem 3.5rem 6rem minmax(0, 1fr)" }}
-                    >
-                      <span className="row-span-1 w-5 text-base leading-5">{activity.emoji}</span>
-                      <span className="row-span-1 w-14 shrink-0 whitespace-nowrap text-xs leading-5 text-[var(--ink)]">{formatHoursLabel(activity.hours)}</span>
-                      <span className="row-span-1 w-24 shrink-0 whitespace-nowrap text-xs leading-5 text-[var(--muted)]">[{formatActivityTimeWindow(activity)}]</span>
-                      {activity.label?.trim() ? (
-                        <span className="col-span-1 min-w-0 break-words text-xs leading-5 text-[var(--muted)]">- {activity.label}</span>
-                      ) : null}
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-
-          {/* Notes card */}
-          <div className="fade-up rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-3 shadow-sm">
-            <p className="mb-1 text-xs leading-5 font-medium text-[var(--ink)]">{t("Notes", "노트")}</p>
-            {journalNotes.length === 0 ? (
-              <p className="break-words text-[11px] leading-5 text-[var(--ink)]">{t("No notes yet.", "아직 노트가 없습니다.")}</p>
-            ) : (
-              <div className="grid gap-1">
-                {journalNotes.slice(0, 3).map((line, index) => (
-                  <p key={`journal-${line}-${index}`} className="break-words text-[11px] leading-5 text-[var(--ink)]">{`- ${line}`}</p>
-                ))}
-                {journalNotes.length > 3 ? <p className="text-[11px] leading-5 text-[var(--muted)]">...</p> : null}
-              </div>
-            )}
-          </div>
-
-          {/* Calendar */}
-          <div className="fade-up rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-2 py-3 shadow-sm">
-            {/* Month navigation */}
-            <div className="mb-2 flex items-center justify-between">
-              <button
-                onClick={() => setSelectedDate(shiftMonth(currentMonth, -1))}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
-                aria-label={t("Previous month", "이전 달")}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="text-sm font-semibold tracking-tight text-[var(--ink)]">
-                {getMonthLabel(currentMonth, appLocale)}
-              </span>
-              <button
-                onClick={() => setSelectedDate(shiftMonth(currentMonth, 1))}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
-                aria-label={t("Next month", "다음 달")}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Weekday headers */}
-            <div className="mb-0.5 grid grid-cols-7 text-center">
-              {weekdayLabels.map((d) => (
-                <span key={d} className="py-1 text-[0.6rem] font-medium uppercase tracking-wide text-[var(--muted)]">{d}</span>
-              ))}
-            </div>
-
-            {/* Calendar days */}
-            <div className="grid grid-cols-7 place-items-center gap-y-0.5">
-              {calendarDays.map((day, index) => {
-                if (!day) return <span key={`blank-${index}`} className="h-10 w-10" />;
-                const isSelected = day === selectedDate;
-                const isToday = day === today;
-                return (
-                  <button
-                    key={day}
-                    onClick={() => setSelectedDate(day)}
-                    className={[
-                      "n-calendar-day",
-                      isSelected ? "n-calendar-day--selected" : "",
-                      !isSelected && isToday ? "n-calendar-day--today" : ""
-                    ].join(" ")}
-                  >
-                    {new Date(`${day}T00:00:00`).getDate()}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Today shortcut — shown when viewing a different month */}
-            {currentMonth !== today.slice(0, 7) ? (
-              <div className="mt-3 flex justify-center">
-                <button
-                  onClick={() => setSelectedDate(today)}
-                  className="rounded-full border border-[var(--border)] px-5 py-1 text-xs font-medium text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)]"
-                >
-                  {appLanguage === "ko" ? "오늘" : "Today"}
-                </button>
-              </div>
-            ) : null}
-          </div>
-
-          </aside>
-        ) : null}
+      <div className="flex flex-1 flex-col gap-4 pt-4">
 
           {/* ── Right Main Content ── */}
         <div
@@ -3076,6 +2987,111 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               ))}
             </div>
           </div>
+
+          {activeDiaryTab === "home" ? (
+            <section className="fade-up grid gap-3 lg:grid-cols-2">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-3 shadow-sm">
+                <p className="mb-1 text-xs leading-5 font-medium text-[var(--ink)]">{t("Today's activity summary", "오늘의 활동 요약")}</p>
+                {activities.length === 0 ? (
+                  <p className="break-words text-xs leading-5 text-[var(--ink)]">{t("No records yet", "아직 기록이 없습니다.")}</p>
+                ) : (
+                  <div className="grid gap-1 max-h-56 overflow-y-auto pr-1">
+                    {activities
+                      .slice()
+                      .sort((a, b) => a.emoji.localeCompare(b.emoji))
+                      .map((activity) => (
+                        <div
+                          key={`${activity.emoji}-${activity.id ?? "no-id"}`}
+                          className="min-w-0 grid items-start gap-2 text-xs leading-5 text-[var(--ink)]"
+                          style={{ gridTemplateColumns: "1.25rem 3.5rem 6rem minmax(0, 1fr)" }}
+                        >
+                          <span className="row-span-1 w-5 text-base leading-5">{activity.emoji}</span>
+                          <span className="row-span-1 w-14 shrink-0 whitespace-nowrap text-xs leading-5 text-[var(--ink)]">{formatHoursLabel(activity.hours)}</span>
+                          <span className="row-span-1 w-24 shrink-0 whitespace-nowrap text-xs leading-5 text-[var(--muted)]">[{formatActivityTimeWindow(activity)}]</span>
+                          {activity.label?.trim() ? (
+                            <span className="col-span-1 min-w-0 break-words text-xs leading-5 text-[var(--muted)]">- {activity.label}</span>
+                          ) : null}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-3 shadow-sm">
+                <p className="mb-1 text-xs leading-5 font-medium text-[var(--ink)]">{t("Notes", "노트")}</p>
+                {journalNotes.length === 0 ? (
+                  <p className="break-words text-[11px] leading-5 text-[var(--ink)]">{t("No notes yet.", "아직 노트가 없습니다.")}</p>
+                ) : (
+                  <div className="grid gap-1">
+                    {journalNotes.slice(0, 3).map((line, index) => (
+                      <p key={`journal-${line}-${index}`} className="break-words text-[11px] leading-5 text-[var(--ink)]">{`- ${line}`}</p>
+                    ))}
+                    {journalNotes.length > 3 ? <p className="text-[11px] leading-5 text-[var(--muted)]">...</p> : null}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-2 py-3 shadow-sm lg:col-span-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <button
+                    onClick={() => setSelectedDate(shiftMonth(currentMonth, -1))}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
+                    aria-label={t("Previous month", "이전 달")}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="text-sm font-semibold tracking-tight text-[var(--ink)]">
+                    {getMonthLabel(currentMonth, appLocale)}
+                  </span>
+                  <button
+                    onClick={() => setSelectedDate(shiftMonth(currentMonth, 1))}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
+                    aria-label={t("Next month", "다음 달")}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="mb-0.5 grid grid-cols-7 text-center">
+                  {weekdayLabels.map((d) => (
+                    <span key={d} className="py-1 text-[0.6rem] font-medium uppercase tracking-wide text-[var(--muted)]">{d}</span>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-7 place-items-center gap-y-0.5">
+                  {calendarDays.map((day, index) => {
+                    if (!day) return <span key={`blank-${index}`} className="h-10 w-10" />;
+                    const isSelected = day === selectedDate;
+                    const isToday = day === today;
+                    return (
+                      <button
+                        key={day}
+                        onClick={() => setSelectedDate(day)}
+                        className={[
+                          "n-calendar-day",
+                          isSelected ? "n-calendar-day--selected" : "",
+                          !isSelected && isToday ? "n-calendar-day--today" : ""
+                        ].join(" ")}
+                      >
+                        {new Date(`${day}T00:00:00`).getDate()}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {currentMonth !== today.slice(0, 7) ? (
+                  <div className="mt-3 flex justify-center">
+                    <button
+                      onClick={() => setSelectedDate(today)}
+                      className="rounded-full border border-[var(--border)] px-5 py-1 text-xs font-medium text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)]"
+                    >
+                      {appLanguage === "ko" ? "오늘" : "Today"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
 
           {/* ── To-do ── */}
           {activeDiaryTab === "todo" ? (
@@ -3601,22 +3617,10 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               <div className="flex items-center border-b border-[var(--border)] px-3 py-3">
                 <span className="n-h2">{t("Notes", "노트")}</span>
                 <span className="ml-2 text-[11px] text-[var(--muted)]">{`${journalNotes.length}/${dailyNoteLimit}`}</span>
-                <button
-                  type="button"
-                  onClick={() => void saveJournalNote()}
-                  disabled={!journalText.trim() || journalNotes.length >= dailyNoteLimit}
-                  className="ml-auto inline-flex h-8 min-w-[4.25rem] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg)] px-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm transition hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-45"
-                  aria-label={t("Save note", "노트 저장")}
-                >
-                  <kbd className="inline-flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none text-[var(--ink)]">
-                    <span aria-hidden="true">⏎</span>
-                    <span>{t("Enter", "엔터")}</span>
-                  </kbd>
-                </button>
               </div>
               {journalError && <p className="px-3 py-2 text-xs text-[var(--danger)]">{journalError}</p>}
               <div className="divide-y divide-[var(--border)]">
-                <div className="px-3 py-3">
+                <div className="px-3 pb-3 pt-3">
                   <textarea
                     value={journalText}
                     onChange={(e) => handleJournalChange(e.target.value)}
@@ -3627,11 +3631,22 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     }}
                     rows={8}
                     className="n-textarea"
-                    placeholder={t("Write a note for today and tap Enter to save...", "오늘의 노트를 입력하고 Enter 버튼으로 저장해 주세요")}
+                    placeholder={t("Write a note for today…", "오늘의 노트를 입력해 주세요…")}
                   />
-                  <p className={`mt-1 text-right text-xs ${journalText.length >= NOTE_CHAR_LIMIT ? "text-red-500 font-semibold" : journalText.length >= NOTE_CHAR_LIMIT * 0.9 ? "text-orange-400" : "text-[var(--muted)]"}`}>
-                    {journalText.length.toLocaleString()} / {NOTE_CHAR_LIMIT.toLocaleString()}
-                  </p>
+                  <div className="mt-2 flex items-center justify-between">
+                    <p className={`text-xs ${journalText.length >= NOTE_CHAR_LIMIT ? "text-red-500 font-semibold" : journalText.length >= NOTE_CHAR_LIMIT * 0.9 ? "text-orange-400" : "text-[var(--muted)]"}`}>
+                      {journalText.length.toLocaleString()} / {NOTE_CHAR_LIMIT.toLocaleString()}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void saveJournalNote()}
+                      disabled={!journalText.trim() || journalNotes.length >= dailyNoteLimit}
+                      className="inline-flex h-7 items-center rounded-lg bg-blue-50 px-3.5 text-xs font-semibold text-blue-500 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-blue-500/15 dark:text-blue-400 dark:hover:bg-blue-500/25"
+                      aria-label={t("Save note", "노트 저장")}
+                    >
+                      {t("Save", "저장")}
+                    </button>
+                  </div>
                 </div>
                 <div className="px-3 py-3">
                   {journalNotes.length === 0 ? (
@@ -3658,7 +3673,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <p className="n-label truncate text-[10px]">{t("Dashboard", "대시보드")}</p>
                   {monthLoading && <Loader2 className="h-3 w-3 animate-spin text-[var(--muted)]" />}
                 </div>
-                <div className="flex flex-shrink-0 items-center gap-0.5 rounded-lg border border-[var(--border)] px-0.5 py-0.5">
+                <div className="flex h-7 flex-shrink-0 items-center gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-0.5 py-0.5">
                   <button
                     type="button"
                     onClick={() =>
@@ -3668,12 +3683,12 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           : shiftMonth(currentMonth, -1)
                       )
                     }
-                    className="n-btn-ghost h-5 w-5 p-0"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-transparent p-0 text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)]"
                     aria-label={dashboardViewMode === "week" ? t("Previous week", "이전 주") : t("Previous month", "이전 달")}
                   >
-                    <ChevronLeft className="h-2.5 w-2.5" />
+                    <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2.2} />
                   </button>
-                  <span className="min-w-0 max-w-[6rem] shrink overflow-hidden truncate px-1 text-center text-[8px] leading-4 text-[var(--muted)]">
+                  <span className="min-w-0 max-w-[5.25rem] shrink overflow-hidden truncate px-1 text-center text-[10px] font-semibold leading-4 text-[var(--ink)]">
                     {dashboardViewMode === "week" ? weeklyRangeLabel : monthlyRangeLabel}
                   </span>
                   <button
@@ -3685,20 +3700,20 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           : shiftMonth(currentMonth, 1)
                       )
                     }
-                    className="n-btn-ghost h-5 w-5 p-0"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-transparent p-0 text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)]"
                     aria-label={dashboardViewMode === "week" ? t("Next week", "다음 주") : t("Next month", "다음 달")}
                   >
-                    <ChevronRight className="h-2.5 w-2.5" />
+                    <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.2} />
                   </button>
                 </div>
-                <div className="flex flex-shrink-0 rounded-xl border border-[var(--border)] p-1">
+                <div className="flex h-7 flex-shrink-0 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5">
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("week")}
-                    className={`px-3 py-2 text-center min-w-[3rem] text-sm font-semibold rounded-lg transition-colors ${
+                    className={`min-w-[2.15rem] rounded-md px-2 py-1 text-center text-[10px] font-semibold leading-4 transition-colors ${
                       dashboardViewMode === "week"
                         ? "bg-[var(--primary)] text-white shadow-sm"
-                        : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
+                        : "text-[var(--ink)] hover:bg-[var(--bg-hover)]"
                     }`}
                   >
                     {t("Week", "주간")}
@@ -3706,10 +3721,10 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <button
                     type="button"
                     onClick={() => setDashboardViewModeAndSave("month")}
-                    className={`px-3 py-2 text-center min-w-[3rem] text-sm font-semibold rounded-lg transition-colors ${
+                    className={`min-w-[2.15rem] rounded-md px-2 py-1 text-center text-[10px] font-semibold leading-4 transition-colors ${
                       dashboardViewMode === "month"
                         ? "bg-[var(--primary)] text-white shadow-sm"
-                        : "text-[var(--ink-light)] hover:bg-[var(--bg-hover)]"
+                        : "text-[var(--ink)] hover:bg-[var(--bg-hover)]"
                     }`}
                   >
                     {t("Month", "월간")}
