@@ -38,6 +38,7 @@ import {
   RefreshCw,
   Settings,
   Sun,
+  Upload,
   UserCircle2,
   Sparkles
 } from "lucide-react";
@@ -289,16 +290,27 @@ export default function Home() {
 
   // 마운트 시 세션 로드 + 인증 상태 변경 구독
   useEffect(() => {
+    let cancelled = false;
+    const unlockLoadingTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      setReady(true);
+      if (!hasCompletedOnboarding()) {
+        setShowOnboarding(true);
+      }
+    }, 5000);
+
     const syncPlan = async (currentSession: Session | null) => {
       const nextUser = currentSession?.user ? currentSession.user : null;
       if (!nextUser) {
         const guestPlan = await resolvePlanState(null);
+        if (cancelled) return;
         setPlanInfo(guestPlan);
         setSymbolPlan(guestPlan.plan);
         return;
       }
 
       const info = await resolvePlanState(nextUser);
+      if (cancelled) return;
       setSymbolPlan(info.plan);
       setPlanInfo(info);
       setStoredPlan(info.plan, nextUser.id);
@@ -310,16 +322,30 @@ export default function Home() {
     };
 
     const loadSession = async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (!error) {
-        setSession(data.session);
-        await syncPlan(data.session);
-        setPlanError("");
-      }
-      setReady(true);
-      // 첫 방문자 온보딩 체크
-      if (!hasCompletedOnboarding()) {
-        setShowOnboarding(true);
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (cancelled) return;
+
+        if (!error) {
+          setSession(data.session);
+          await syncPlan(data.session);
+          if (cancelled) return;
+          setPlanError("");
+        } else {
+          setPlanError(error.message ?? "");
+        }
+      } catch {
+        if (!cancelled) {
+          setPlanError("");
+        }
+      } finally {
+        window.clearTimeout(unlockLoadingTimer);
+        if (cancelled) return;
+        setReady(true);
+        // 첫 방문자 온보딩 체크
+        if (!hasCompletedOnboarding()) {
+          setShowOnboarding(true);
+        }
       }
     };
 
@@ -329,6 +355,7 @@ export default function Home() {
     const {
       data: { subscription }
     } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+      if (cancelled) return;
       setSession(currentSession);
       void syncPlan(currentSession);
       setPlanError("");
@@ -336,6 +363,8 @@ export default function Home() {
 
     // cleanup: 구독 해제 (메모리 누수 방지)
     return () => {
+      cancelled = true;
+      window.clearTimeout(unlockLoadingTimer);
       subscription.unsubscribe();
     };
   }, []);
@@ -1536,12 +1565,13 @@ export default function Home() {
               </div>
               {settingsPanel === "settings" ? (
                 <>
+                  {/* Data — sync, backup, restore, export, clear */}
                   <div className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
                     <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-xs">
                       <div className="min-w-0">
                         <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
                           <Globe className="h-3.5 w-3.5" />
-                          {t("iCloud sync", "iCloud 동기화")}
+                          {t("Sync", "동기화")}
                         </span>
                         <p className="mt-0.5 truncate text-[10px] text-[var(--muted)]">
                           {!session
@@ -1569,7 +1599,7 @@ export default function Home() {
                         <Download className="h-3.5 w-3.5" />
                         {t("Backup", "백업")}
                       </span>
-                      <span className="text-[10px] text-[var(--muted)]">{t("JSON", "JSON")}</span>
+                      <span className="text-[10px] text-[var(--muted)]">JSON</span>
                     </button>
                     <button
                       type="button"
@@ -1577,133 +1607,112 @@ export default function Home() {
                       className="flex w-full items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--bg-hover)]"
                     >
                       <span className="inline-flex items-center gap-1.5">
-                        <Download className="h-3.5 w-3.5" />
+                        <Upload className="h-3.5 w-3.5" />
                         {t("Restore", "복원")}
                       </span>
-                      <span className="text-[10px] text-[var(--muted)]">{t("From backup file", "백업 파일에서")}</span>
+                      <span className="text-[10px] text-[var(--muted)]">{t("From file", "파일에서")}</span>
                     </button>
+                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
+                      <span className="inline-flex items-center gap-1.5 text-xs text-[var(--ink)]">
+                        <Printer className="h-3.5 w-3.5" />
+                        {t("Export PDF", "PDF 내보내기")}
+                      </span>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => exportCurrentViewToPdf("day")}
+                          className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                        >
+                          {t("Day", "일간")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => exportCurrentViewToPdf("week")}
+                          className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                        >
+                          {t("Week", "주간")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => exportCurrentViewToPdf("month")}
+                          className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                        >
+                          {t("Month", "월간")}
+                        </button>
+                      </div>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => exportCurrentViewToPdf("day")}
-                      className="flex w-full items-center justify-between gap-2 px-2.5 pt-2 text-left text-xs text-[var(--ink)]"
+                      onClick={() => clearDeviceData()}
+                      className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger)]/5"
                     >
-                      <span className="inline-flex items-center gap-1.5">
-                        <Printer className="h-3.5 w-3.5" />
-                        {t("Export to PDF", "PDF 내보내기")}
-                      </span>
-                      <span className="text-[10px] text-[var(--muted)]">{t("Choose range", "범위 선택")}</span>
+                      <span>{session ? t("Clear device data", "기기 로컬 데이터 삭제") : t("Clear local data", "로컬 데이터 삭제")}</span>
+                      <span className="text-[10px] text-[var(--muted)]">{t("Local only", "로컬만")}</span>
                     </button>
-                    <div className="flex gap-1 border-b border-[var(--border)] px-2.5 pb-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => exportCurrentViewToPdf("day")}
-                        className="flex-1 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                      >
-                        {t("Day", "일간")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => exportCurrentViewToPdf("week")}
-                        className="flex-1 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                      >
-                        {t("Week", "주간")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => exportCurrentViewToPdf("month")}
-                        className="flex-1 rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                      >
-                        {t("Month", "월간")}
-                      </button>
+                  </div>
+                  {/* Appearance — theme, language, font */}
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Appearance", "외관")}</p>
+                  <div className="mb-2 overflow-hidden rounded-md border border-[var(--border)]">
+                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
+                      <span className="text-xs text-[var(--ink)]">{t("Theme", "테마")}</span>
+                      <div className="flex items-center gap-1 text-xs">
+                        <button
+                          onClick={() => applyThemeMode("light")}
+                          className={`flex items-center gap-1 rounded-md border px-2 py-1 ${themeMode === "light" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                          aria-label={t("Set light mode", "라이트 모드로 전환")}
+                        >
+                          <Sun className="h-3 w-3" /> {t("Light", "라이트")}
+                        </button>
+                        <button
+                          onClick={() => applyThemeMode("dark")}
+                          className={`flex items-center gap-1 rounded-md border px-2 py-1 ${themeMode === "dark" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                          aria-label={t("Set dark mode", "다크 모드로 전환")}
+                        >
+                          <Moon className="h-3 w-3" /> {t("Dark", "다크")}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Theme", "테마")}</p>
-                  <div className="mb-2 flex items-center gap-1 text-xs">
-                    <button
-                      onClick={() => applyThemeMode("light")}
-                      className={`flex flex-1 items-center justify-center gap-1 rounded-md border px-2 py-1.5 ${
-                        themeMode === "light"
-                          ? "border-[var(--primary)] text-[var(--ink)]"
-                          : "border-[var(--border)] text-[var(--muted)]"
-                      }`}
-                      aria-label={t("Set light mode", "라이트 모드로 전환")}
-                    >
-                      <Sun className="h-3.5 w-3.5" /> {t("Light", "라이트")}
-                    </button>
-                    <button
-                      onClick={() => applyThemeMode("dark")}
-                      className={`flex flex-1 items-center justify-center gap-1 rounded-md border px-2 py-1.5 ${
-                        themeMode === "dark"
-                          ? "border-[var(--primary)] text-[var(--ink)]"
-                          : "border-[var(--border)] text-[var(--muted)]"
-                      }`}
-                      aria-label={t("Set dark mode", "다크 모드로 전환")}
-                    >
-                      <Moon className="h-3.5 w-3.5" /> {t("Dark", "다크")}
-                    </button>
-                  </div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Language", "언어")}</p>
-                  <div className="mb-2 flex items-center gap-1 text-xs">
-                    <button
-                      onClick={() => applyLanguage("en")}
-                      className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
-                        appLanguage === "en"
-                          ? "border-[var(--primary)] text-[var(--ink)]"
-                          : "border-[var(--border)] text-[var(--muted)]"
-                      }`}
-                      aria-label={t("Set English language", "영어로 전환")}
-                    >
-                      EN
-                    </button>
-                    <button
-                      onClick={() => applyLanguage("ko")}
-                      className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
-                        appLanguage === "ko"
-                          ? "border-[var(--primary)] text-[var(--ink)]"
-                          : "border-[var(--border)] text-[var(--muted)]"
-                      }`}
-                      aria-label={t("Set Korean language", "한국어로 전환")}
-                    >
-                      KO
-                    </button>
-                  </div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Font styles", "폰트 스타일")}</p>
-                  <div className="mb-2 rounded-md border border-[var(--border)] p-2">
-                    <div className="mb-1.5 flex items-center gap-1 text-[var(--ink)]">
-                      <Palette className="h-3.5 w-3.5" />
-                      <span className="text-xs font-semibold">{t("Typography preset", "타이포 프리셋")}</span>
+                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-2.5 py-2">
+                      <span className="text-xs text-[var(--ink)]">{t("Language", "언어")}</span>
+                      <div className="flex items-center gap-1 text-xs">
+                        <button
+                          onClick={() => applyLanguage("en")}
+                          className={`rounded-md border px-2 py-1 ${appLanguage === "en" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                          aria-label={t("Set English language", "영어로 전환")}
+                        >
+                          EN
+                        </button>
+                        <button
+                          onClick={() => applyLanguage("ko")}
+                          className={`rounded-md border px-2 py-1 ${appLanguage === "ko" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                          aria-label={t("Set Korean language", "한국어로 전환")}
+                        >
+                          KO
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1 text-xs">
-                      <button
-                        onClick={() => applyFontStyle("default")}
-                        className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
-                          fontStyle === "default"
-                            ? "border-[var(--primary)] text-[var(--ink)]"
-                            : "border-[var(--border)] text-[var(--muted)]"
-                        }`}
-                      >
-                        {t("Default", "기본")}
-                      </button>
-                      <button
-                        onClick={() => applyFontStyle("clean")}
-                        className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
-                          fontStyle === "clean"
-                            ? "border-[var(--primary)] text-[var(--ink)]"
-                            : "border-[var(--border)] text-[var(--muted)]"
-                        }`}
-                      >
-                        {t("Clean", "클린")}
-                      </button>
-                      <button
-                        onClick={() => applyFontStyle("rounded")}
-                        className={`flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 ${
-                          fontStyle === "rounded"
-                            ? "border-[var(--primary)] text-[var(--ink)]"
-                            : "border-[var(--border)] text-[var(--muted)]"
-                        }`}
-                      >
-                        {t("Rounded", "라운드")}
-                      </button>
+                    <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+                      <span className="text-xs text-[var(--ink)]">{t("Font", "폰트")}</span>
+                      <div className="flex items-center gap-1 text-xs">
+                        <button
+                          onClick={() => applyFontStyle("default")}
+                          className={`rounded-md border px-2 py-1 ${fontStyle === "default" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                        >
+                          {t("Default", "기본")}
+                        </button>
+                        <button
+                          onClick={() => applyFontStyle("clean")}
+                          className={`rounded-md border px-2 py-1 ${fontStyle === "clean" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                        >
+                          {t("Clean", "클린")}
+                        </button>
+                        <button
+                          onClick={() => applyFontStyle("rounded")}
+                          className={`rounded-md border px-2 py-1 ${fontStyle === "rounded" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                        >
+                          {t("Rounded", "라운드")}
+                        </button>
+                      </div>
                     </div>
                   </div>
                   {/* 알림 설정 */}
@@ -1903,41 +1912,6 @@ export default function Home() {
                   <p className="mt-2 text-[11px] leading-5 text-[var(--muted)]">
                       {t("Plan source", "플랜 출처")}: {planSourceLabel(planInfo.source)}
                     </p>
-                  </div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
-                    {t("Privacy", "개인정보")}
-                  </p>
-                  <div className="mb-2 rounded-md border border-[var(--border)] p-2">
-                    <div className="mb-1 flex items-start gap-1.5 text-[var(--ink)]">
-                      <ShieldCheck className="mt-0.5 h-4 w-4 text-[var(--primary)]" />
-                      <span className="font-semibold">{t("Data storage policy", "데이터 보관 방식")}</span>
-                    </div>
-                    <p className="text-[11px] leading-5 text-[var(--muted)]">
-                      {session
-                        ? t(
-                            "Signed-in data (tasks, notes, activities, subscription and entitlements) is stored in Supabase by user_id. Some settings and draft caches are kept on this device.",
-                            "로그인 데이터(할 일, 노트, 활동, 구독·혜택)는 Supabase(클라우드)에 사용자 ID 기준으로 저장됩니다. 일부 설정/초안은 이 기기에 저장됩니다."
-                          )
-                        : t(
-                            "Guest data is stored only in this browser's localStorage and does not sync to other devices. It is removed when you clear local data below.",
-                            "비로그인 데이터는 이 브라우저의 localStorage에만 저장되며 다른 기기와 동기화되지 않습니다. 아래에서 로컬 데이터 삭제 시 함께 삭제됩니다."
-                          )}
-                    </p>
-                    <p className="mt-1.5 text-[11px] leading-5 text-[var(--muted)]">
-                      {t(
-                        "Local data is kept as plain localStorage on this device. Do not store secrets here. Clear it on shared devices and sign out on public devices.",
-                        "로컬 데이터는 이 기기의 localStorage에 평문으로 저장됩니다. 비밀번호 같은 민감한 정보는 저장하지 마세요. 공유 기기 사용 후 즉시 삭제하고 공용 기기에서는 로그아웃해 주세요."
-                      )}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => clearDeviceData()}
-                      className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                    >
-                      {session
-                        ? t("Clear device data", "기기 로컬 데이터 삭제")
-                        : t("Clear local data", "로컬 데이터 삭제")}
-                    </button>
                   </div>
                   {isAdmin ? (
                     <button
