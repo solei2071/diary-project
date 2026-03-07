@@ -245,7 +245,7 @@ function SymbolPicker({
     applySymbolOrder(next);
   };
 
-  const handleSymbolDragStart = (emoji: string, event: DragEvent<HTMLDivElement>) => {
+  const handleSymbolDragStart = (emoji: string, event: DragEvent<HTMLElement>) => {
     draggingSymbol.current = emoji;
     setIsDragging(true);
     event.dataTransfer.effectAllowed = "move";
@@ -263,7 +263,7 @@ function SymbolPicker({
     moveSymbolToIndex(from, targetIndex);
   };
 
-  const handleSymbolDragEnd = (event: DragEvent<HTMLDivElement>) => {
+  const handleSymbolDragEnd = (event: DragEvent<HTMLElement>) => {
     setIsDragging(false);
     const active = draggingSymbol.current;
     draggingSymbol.current = null;
@@ -435,20 +435,27 @@ function SymbolPicker({
                 return (
                   <div
                     key={symbol.emoji}
-                    draggable
-                    onDragStart={(event) => handleSymbolDragStart(symbol.emoji, event)}
                     onDragOver={(event) => handleSymbolDragOver(symbol.emoji, event)}
                     onDrop={(event) => event.preventDefault()}
-                    onDragEnd={handleSymbolDragEnd}
                     onContextMenu={(event) =>
                       openSymbolContextMenu(symbol.emoji, event)
                     }
-                    className={`group flex items-center gap-2 px-2.5 py-2 transition-colors ${
-                      isDragging ? "cursor-grab active:cursor-grabbing" : ""
-                    }`}
+                    className="group flex items-center gap-2 px-2.5 py-2 transition-colors"
                   >
                     {/* Drag handle */}
-                    <GripVertical className="h-4 w-4 flex-shrink-0 text-[var(--muted)]" />
+                    <button
+                      type="button"
+                      draggable={!isEditing}
+                      onDragStart={(event) => handleSymbolDragStart(symbol.emoji, event)}
+                      onDragEnd={handleSymbolDragEnd}
+                      className={`rounded p-0.5 text-[var(--muted)] ${
+                        isDragging ? "cursor-grabbing" : "cursor-grab"
+                      }`}
+                      aria-label={t("Reorder symbol", "심볼 순서 변경")}
+                      title={t("Drag to reorder", "드래그해서 순서 변경")}
+                    >
+                      <GripVertical className="h-4 w-4 flex-shrink-0" />
+                    </button>
 
                     {/* 삭제 (원 안의 - 버튼) */}
                     <button
@@ -468,9 +475,11 @@ function SymbolPicker({
                       <div className="min-w-0 flex-1">
                         <input
                           autoFocus
+                          draggable={false}
                           value={editingLabels[symbol.emoji] ?? ""}
                           onChange={(e) => updateLabel(symbol.emoji, e.target.value)}
                           onBlur={() => commitLabel(symbol.emoji)}
+                          onKeyDownCapture={(event) => event.stopPropagation()}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
@@ -504,6 +513,8 @@ function SymbolPicker({
                       </div>
                     ) : (
                       <button
+                        type="button"
+                        draggable={false}
                         onClick={() =>
                           startEditLabel(symbol.emoji, symbol.label)
                         }
