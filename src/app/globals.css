@@ -101,8 +101,7 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-html[data-font-style="bold"] body,
-html[data-font-style="default"] body {
+html[data-font-style="bold"] body {
   font-family: "Inter", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
 }
 
@@ -110,6 +109,7 @@ html[data-font-style="clean"] body {
   font-family: "IBM Plex Sans", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
 }
 
+html[data-font-style="default"] body,
 html[data-font-style="rounded"] body {
   font-family: "Nunito", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
 }

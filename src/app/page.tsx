@@ -14,6 +14,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { ToastProvider } from "@/components/Toast";
 import { hasCompletedOnboarding } from "@/lib/onboarding";
 import {
+  getCustomerInfo,
   getProMonthlyPricing,
   initPurchases,
   purchaseProMonthly,
@@ -113,12 +114,29 @@ const PRIVACY_CONTACT_EMAIL =
   process.env.NEXT_PUBLIC_PRIVACY_CONTACT_EMAIL?.trim() || "privacy@dailyflowdiary.com";
 const APP_FONT_STYLE_STORAGE_KEY = "diary-font-style";
 const APP_LAST_SYNC_AT_STORAGE_KEY = "diary-last-sync-at";
+const APP_STORE_SUBSCRIPTIONS_URL = "https://apps.apple.com/account/subscriptions";
 
 const resolveStoredFontStyle = (value: string | null): FontStyle => {
   if (value === "bold" || value === "clean" || value === "rounded") return value;
-  // legacy migration: 이전 "default" 키는 "bold"로 치환
-  if (value === "default") return "bold";
+  // legacy migration: 이전 "default" 키는 rounded로 치환
+  if (value === "default") return "rounded";
   return "rounded";
+};
+
+const resolveSessionProvider = (session: Session | null) => {
+  if (!session?.user) return "email";
+  const identityProvider =
+    session.user.identities?.find((identity) => Boolean(identity.provider))?.provider ?? null;
+  const providers = Array.isArray(session.user.app_metadata?.providers)
+    ? session.user.app_metadata.providers.find((provider): provider is string => typeof provider === "string" && provider.length > 0)
+    : null;
+  return String(
+    identityProvider ||
+      session.user.app_metadata?.provider ||
+      providers ||
+      session.user.user_metadata?.provider ||
+      "email"
+  ).toLowerCase();
 };
 
 const clearLocalDiaryData = (userId?: string | null) => {
@@ -230,13 +248,7 @@ export default function Home() {
 
   const isPro = symbolPlan === "pro";
   const proPlanFeatures = getPlanLimits("pro");
-  const accountProvider = session
-    ? String(
-        session.user.app_metadata?.provider ||
-          session.user.user_metadata?.provider ||
-          "email"
-      )
-    : "email";
+  const accountProvider = resolveSessionProvider(session);
 
   // 마운트 시 세션 로드 + 인증 상태 변경 구독
   useEffect(() => {
@@ -495,68 +507,36 @@ export default function Home() {
     });
   };
 
-  const deleteCloudData = () => {
-    if (!session?.user) return;
-    const message = isKorean
-      ? "클라우드(서버) 데이터(할 일/노트/활동)를 삭제할까요? 구독 상태도 초기화되며 이 작업은 되돌릴 수 없습니다."
-      : "Delete all cloud data (todos, notes, activities) and subscription info? This action cannot be undone.";
-    setConfirmDialog({ message, onConfirm: () => void executeDeleteCloudData() });
-  };
-
-  const executeDeleteCloudData = async () => {
-    if (!session?.user) return;
-    setIsAccountBusy(true);
-    setAccountError("");
-    setAccountMessage("");
-
-    try {
-      const userId = session.user.id;
-      const [todosDelete, journalDelete, activitiesDelete, subscriptionsDelete, entitlementsDelete] = await Promise.all([
-        supabase.from("todos").delete().eq("user_id", userId),
-        supabase.from("journal_entries").delete().eq("user_id", userId),
-        supabase.from("daily_activities").delete().eq("user_id", userId),
-        supabase.from("user_subscriptions").delete().eq("user_id", userId),
-        supabase.from("user_entitlements").delete().eq("user_id", userId)
-      ]);
-
-      const firstError =
-        todosDelete.error ??
-        journalDelete.error ??
-        activitiesDelete.error ??
-        subscriptionsDelete.error ??
-        entitlementsDelete.error;
-
-      if (firstError) {
-        setAccountError(
-          t("Failed to delete cloud data. Please try again.", "클라우드 데이터 삭제에 실패했습니다. 다시 시도해 주세요.")
-        );
-        return;
-      }
-
-      clearStoredPlan(userId);
-      clearStoredPlan();
-      const info = await resolvePlanState(session.user);
-      setSymbolPlan(info.plan);
-      setPlanInfo(info);
-      setSubscriptionInfo(null);
-      setAccountMessage(
-        t(
-          "Cloud data has been deleted. Your account remains active, but data is no longer available.",
-          "클라우드 데이터가 삭제되었습니다. 계정은 유지되며 기록은 더 이상 조회할 수 없습니다."
-        )
-      );
-      clearLocalDiaryData(session.user.id);
-      emitLocalDataCleared();
-    } finally {
-      setIsAccountBusy(false);
-    }
-  };
-
   const resetAccountForm = () => {
     setNewPassword("");
     setConfirmPassword("");
     setAccountError("");
     setAccountMessage("");
+  };
+  const openPlanSettings = () => {
+    setSettingsPanel("settings");
+    setSettingsDetailSection("plan");
+  };
+
+  const openSubscriptionManagement = async () => {
+    setAccountError("");
+    setAccountMessage("");
+
+    let targetUrl = APP_STORE_SUBSCRIPTIONS_URL;
+    const result = await getCustomerInfo();
+    if (!result.ok) {
+      setAccountMessage(
+        appLanguage === "ko"
+          ? "App Store에서 구독 설정을 엽니다."
+          : "Opening subscription settings in the App Store."
+      );
+    } else if (result.data?.managementURL) {
+      targetUrl = result.data.managementURL;
+    }
+
+    if (typeof window !== "undefined") {
+      window.location.assign(targetUrl);
+    }
   };
   const isKorean = appLanguage === "ko";
   const appLocale = isKorean ? "ko-KR" : "en-US";
@@ -1071,9 +1051,7 @@ export default function Home() {
       return;
     }
 
-    const provider = String(
-      session.user.app_metadata?.provider || session.user.user_metadata?.provider || "email"
-    );
+    const provider = resolveSessionProvider(session);
     if (provider !== "email") {
       setAccountError(
         t(
@@ -1599,10 +1577,10 @@ export default function Home() {
                       <span className="text-xs text-[var(--ink)]">{t("Font", "폰트")}</span>
                       <div className="flex items-center gap-1 text-xs">
                         <button
-                          onClick={() => applyFontStyle("bold")}
-                          className={`rounded-md border px-2 py-1 ${fontStyle === "bold" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                          onClick={() => applyFontStyle("rounded")}
+                          className={`rounded-md border px-2 py-1 ${fontStyle === "rounded" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
                         >
-                          {t("Bold", "볼드")}
+                          {t("Round", "라운드")}
                         </button>
                         <button
                           onClick={() => applyFontStyle("clean")}
@@ -1611,10 +1589,10 @@ export default function Home() {
                           {t("Clean", "클린")}
                         </button>
                         <button
-                          onClick={() => applyFontStyle("rounded")}
-                          className={`rounded-md border px-2 py-1 ${fontStyle === "rounded" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+                          onClick={() => applyFontStyle("bold")}
+                          className={`rounded-md border px-2 py-1 ${fontStyle === "bold" ? "border-[var(--primary)] text-[var(--ink)]" : "border-[var(--border)] text-[var(--muted)]"}`}
                         >
-                          {t("Rounded", "라운드")}
+                          {t("Bold", "볼드")}
                         </button>
                       </div>
                     </div>
@@ -1818,6 +1796,26 @@ export default function Home() {
                         {t("Plan source", "플랜 출처")}: {planSourceLabel(planInfo.source)}
                       </p>
                     </div>
+                    {session && (isPro || subscriptionInfo) ? (
+                      <div className="rounded-md border border-[var(--border)] p-2">
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          {t("Subscription controls", "구독 관리")}
+                        </p>
+                        <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
+                          {t(
+                            "Open the App Store subscription screen to manage or cancel your subscription.",
+                            "App Store 구독 화면을 열어 구독을 관리하거나 해지할 수 있습니다."
+                          )}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void openSubscriptionManagement()}
+                          className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                        >
+                          {t("Manage or cancel subscription", "구독 관리 / 해지")}
+                        </button>
+                      </div>
+                    ) : null}
                     {isAdmin ? (
                       <button
                         onClick={() => {
@@ -1938,6 +1936,8 @@ export default function Home() {
           <>
             {session ? (
               <div className="space-y-2 text-xs">
+                {accountError ? <p className="text-[11px] text-[var(--danger)]">{accountError}</p> : null}
+                {accountMessage ? <p className="text-[11px] text-[var(--success)]">{accountMessage}</p> : null}
                 <div className="rounded-md border border-[var(--border)] p-2">
                   <div className="mb-1 flex items-center gap-1.5 text-[var(--ink)]">
                     <UserCircle2 className="h-4 w-4" />
@@ -2054,9 +2054,7 @@ export default function Home() {
                   ) : null}
                   <button
                     type="button"
-                    onClick={() => {
-                      setSettingsPanel("settings");
-                    }}
+                    onClick={openPlanSettings}
                     className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--ink)]"
                   >
                     {t("Open plan settings", "플랜 설정 열기")}
@@ -2073,71 +2071,63 @@ export default function Home() {
                     <p>{t("Advanced summary", "고급 요약")}: {planInfo.features.canAdvancedSummary ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
                   </div>
                 </div>
-                <div className="rounded-md border border-[var(--border)] p-2">
-                  <div className="mb-1 flex items-center gap-1.5 text-[var(--ink)]">
-                    <KeyRound className="h-4 w-4" />
-                    <span className="font-semibold">{t("Password", "비밀번호")}</span>
-                  </div>
-                  {canChangePassword ? (
-                    <>
-                      <form className="space-y-2" onSubmit={(e) => void updatePassword(e)}>
-                        <div>
-                          <label className="mb-1 block text-[10px] font-semibold text-[var(--muted)]">{t("New Password", "새 비밀번호")}</label>
-                          <input
-                            value={newPassword}
-                            onChange={(e) => setNewPassword(e.target.value)}
-                            type="password"
-                            className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs"
-                            placeholder={t("At least 8 characters", "최소 8자 이상 입력해 주세요")}
-                            autoComplete="new-password"
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-[10px] font-semibold text-[var(--muted)]">
-                            {t("Confirm Password", "비밀번호 재확인")}
-                          </label>
-                          <input
-                            value={confirmPassword}
-                            onChange={(e) => setConfirmPassword(e.target.value)}
-                            type="password"
-                            className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs"
-                            placeholder={t("Repeat same password", "동일한 비밀번호를 다시 입력해 주세요")}
-                            autoComplete="new-password"
-                          />
-                        </div>
-                        <button
-                          type="submit"
-                          disabled={isAccountBusy || !newPassword || !confirmPassword}
-                          className="w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isAccountBusy ? t("Updating...", "변경 중…") : t("Change password", "비밀번호 변경")}
-                        </button>
-                      </form>
-                      <p className="mt-1.5 text-[10px] text-[var(--muted)]">
-                        {t("Password updates apply to your login method and will replace the existing password.", "비밀번호 변경은 로그인 방법에 반영되며 기존 비밀번호를 대체합니다.")}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-[11px] text-[var(--muted)]">
-                      {t("Password change is unavailable for this account type.", "이 계정에서는 비밀번호 변경을 사용할 수 없습니다.")}
+                {canChangePassword ? (
+                  <div className="rounded-md border border-[var(--border)] p-2">
+                    <div className="mb-1 flex items-center gap-1.5 text-[var(--ink)]">
+                      <KeyRound className="h-4 w-4" />
+                      <span className="font-semibold">{t("Password", "비밀번호")}</span>
+                    </div>
+                    <form className="space-y-2" onSubmit={(e) => void updatePassword(e)}>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold text-[var(--muted)]">{t("New Password", "새 비밀번호")}</label>
+                        <input
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          type="password"
+                          className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs"
+                          placeholder={t("At least 8 characters", "최소 8자 이상 입력해 주세요")}
+                          autoComplete="new-password"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold text-[var(--muted)]">
+                          {t("Confirm Password", "비밀번호 재확인")}
+                        </label>
+                        <input
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          type="password"
+                          className="n-input w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs"
+                          placeholder={t("Repeat same password", "동일한 비밀번호를 다시 입력해 주세요")}
+                          autoComplete="new-password"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isAccountBusy || !newPassword || !confirmPassword}
+                        className="w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isAccountBusy ? t("Updating...", "변경 중…") : t("Change password", "비밀번호 변경")}
+                      </button>
+                    </form>
+                    <p className="mt-1.5 text-[10px] text-[var(--muted)]">
+                      {t("Password updates apply to your login method and will replace the existing password.", "비밀번호 변경은 로그인 방법에 반영되며 기존 비밀번호를 대체합니다.")}
                     </p>
-                  )}
-                  {accountError && <p className="mt-1 text-[11px] text-[var(--danger)]">{accountError}</p>}
-                  {accountMessage && <p className="mt-1 text-[11px] text-[var(--success)]">{accountMessage}</p>}
-                </div>
+                  </div>
+                ) : null}
                 <div className="rounded-md border border-[var(--border)] p-2">
                   <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">{t("Data policy", "데이터 안내")}</p>
                   <p className="mb-2 text-[10px] leading-5 text-[var(--muted)]">
                     {t(
-                      "Data is separated by login state. You can export it, remove local data, delete all cloud data for this account, or request full account deletion.",
-                      "로그인 상태별로 데이터가 구분됩니다. 여기에서 내보내기, 로컬 삭제, 클라우드 데이터 전체 삭제, 계정 삭제 요청을 진행할 수 있습니다."
+                      "Data is separated by login state. You can export it, remove local data, or request full account deletion.",
+                      "로그인 상태별로 데이터가 구분됩니다. 여기에서 내보내기, 로컬 삭제, 계정 삭제 요청을 진행할 수 있습니다."
                     )}
                   </p>
                   <p className="mb-2 text-[10px] leading-4 text-[var(--muted)]">
                     {session
                       ? t(
-                          "Local clear removes cached drafts, activity templates, symbols, and local settings saved on this device. Cloud delete removes todos, notes, activities, and subscription records stored in Supabase for this account.",
-                          "로컬 삭제는 이 기기의 초안, 활동 템플릿, 심볼, 로컬 설정을 제거합니다. 클라우드 삭제는 이 계정의 할 일/노트/활동/구독 기록을 Supabase에서 제거합니다."
+                          "Local clear removes cached drafts, activity templates, symbols, and local settings saved on this device.",
+                          "로컬 삭제는 이 기기의 초안, 활동 템플릿, 심볼, 로컬 설정을 제거합니다."
                         )
                       : t(
                           "Local clear removes cached drafts, activity templates, symbols, and local settings from this browser.",
@@ -2170,20 +2160,6 @@ export default function Home() {
                   >
                     {t("Delete local data on this device", "이 기기의 로컬 데이터 삭제")}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void deleteCloudData()}
-                    disabled={isAccountBusy}
-                    className="mt-2 w-full rounded-md border border-[var(--danger)]/55 px-3 py-2 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isAccountBusy ? t("Deleting…", "삭제 중…") : t("Delete all my cloud data", "클라우드 데이터 전체 삭제")}
-                  </button>
-                  <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
-                    {t(
-                      "This removes all todos, notes, activities, and plan records from Supabase for this account.",
-                      "이 계정의 할 일, 노트, 활동, 요금제 기록을 Supabase에서 모두 삭제합니다."
-                    )}
-                  </p>
                   <div className="mt-2 rounded border border-[var(--danger)]/40 p-2">
                     <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--danger)]">
                       {t("Delete account", "계정 삭제")}

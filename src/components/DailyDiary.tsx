@@ -63,6 +63,7 @@ const NOTE_DRAFT_COMPOSE_KEY = "diary-note-draft-compose";
 const JOURNAL_NOTES_PREFIX = "journal-notes-v2::";
 const TODO_REPEAT_DEFAULT_PLUS_DAYS = 14;
 const TODO_REPEAT_MAX_PLUS_DAYS = 365;
+const DEFAULT_TEMPLATE_ACTIVITY_HOURS = 1;
 const TODO_REPEAT_DAY_LABELS = [
   { value: 1, en: "Mon", ko: "월" },
   { value: 2, en: "Tue", ko: "화" },
@@ -906,6 +907,7 @@ export default function DailyDiary({
     };
   }, [today]);
   const selectedDateRef = useRef(selectedDate);
+  const activitiesRef = useRef<UiActivity[]>(activities);
   const ACTIVITY_SWIPE_THRESHOLD = 84;
   const ACTIVITY_SWIPE_MAX = 120;
   const syncStateRef = useRef({
@@ -916,12 +918,13 @@ export default function DailyDiary({
 
   useEffect(() => {
     selectedDateRef.current = selectedDate;
+    activitiesRef.current = activities;
     syncStateRef.current = {
       todo: isTodoDirty,
       journal: isJournalDirty,
       activity: isActivityDirty
     };
-  }, [selectedDate, isTodoDirty, isJournalDirty, isActivityDirty]);
+  }, [selectedDate, activities, isTodoDirty, isJournalDirty, isActivityDirty]);
 
   useEffect(() => {
     const saved = loadUserSymbols(symbolPlan, planLimits.symbolLimit);
@@ -1022,7 +1025,7 @@ export default function DailyDiary({
     return `${hourText}${hourText && minuteText ? "\u00A0" : ""}${minuteText}`.trim();
   };
 
-  const calculateHoursFromRange = (startTime?: string, endTime?: string) => {
+  const calculateHoursFromRange = useCallback((startTime?: string, endTime?: string) => {
     const normalizedStart = startTime ? parseClockTimeToMinutes(formatStartTime(startTime)) : null;
     const normalizedEnd = endTime ? parseClockTimeToMinutes(formatStartTime(endTime)) : null;
     if (normalizedStart === null || normalizedEnd === null) {
@@ -1034,7 +1037,7 @@ export default function DailyDiary({
     }
     if (durationMinutes <= 0) return null;
     return normalizeActivityHours(durationMinutes / 60);
-  };
+  }, []);
 
   const calculateEndTimeFromHours = useCallback((startTime: string, hours: number) => {
     const normalizedStart = parseClockTimeToMinutes(formatStartTime(startTime));
@@ -1046,11 +1049,28 @@ export default function DailyDiary({
     return formatMinutesToClock(normalizedMinutes);
   }, [formatMinutesToClock]);
 
+  const hasStoredExplicitEndTime = useCallback((activity: UiActivity) => {
+    const normalizedStart = formatStartTime(activity.startTime ?? "00:00");
+    const normalizedEnd = formatStartTime(activity.endTime ?? "00:00");
+    if (!activity.endTime) return false;
+    if (normalizedStart === "00:00" && normalizedEnd === "00:00") return false;
+
+    const rangeHours = calculateHoursFromRange(normalizedStart, normalizedEnd);
+    if (
+      normalizedEnd === "00:00" &&
+      rangeHours !== null &&
+      Math.abs(rangeHours - normalizeActivityHours(activity.hours)) > 0.01
+    ) {
+      return false;
+    }
+
+    return true;
+  }, [calculateHoursFromRange]);
+
   const getEffectiveEndTime = (activity: UiActivity) => {
     const normalizedStart = formatStartTime(activity.startTime ?? "00:00");
     const normalizedEnd = formatStartTime(activity.endTime ?? "00:00");
-    const hasExplicitEnd = Boolean(activity.endTime && !(normalizedStart === "00:00" && normalizedEnd === "00:00"));
-    if (hasExplicitEnd) return normalizedEnd;
+    if (hasStoredExplicitEndTime(activity)) return normalizedEnd;
     return calculateEndTimeFromHours(normalizedStart, activity.hours) ?? "00:00";
   };
 
@@ -1101,13 +1121,7 @@ const buildActivityConflictWarnings = useCallback((rows: UiActivity[], isKorean:
       if (start === null) return null;
 
       const parsedHours = normalizeActivityHours(activity.hours);
-      const hasExplicitEnd = Boolean(
-        activity.endTime &&
-          !(
-            formatStartTime(activity.startTime ?? "00:00") === "00:00" &&
-            formatStartTime(activity.endTime) === "00:00"
-          )
-      );
+      const hasExplicitEnd = hasStoredExplicitEndTime(activity);
       const endCandidate = parseClockTimeToMinutes(
         hasExplicitEnd
           ? formatStartTime(activity.endTime ?? "00:00")
@@ -1169,7 +1183,7 @@ const buildActivityConflictWarnings = useCallback((rows: UiActivity[], isKorean:
     }
 
   return warnings;
-  }, [calculateEndTimeFromHours]);
+  }, [calculateEndTimeFromHours, hasStoredExplicitEndTime]);
 
 /** 같은 이모지의 여러 행을 합산해 하나의 UiActivity로 */
 const normalizeActivities = (rows: DailyActivityRow[]) =>
@@ -2152,6 +2166,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
   };
 
   const composeUpdatedActivities = (
+    sourceActivities: UiActivity[],
     emoji: string,
     nextHours: number,
     nextLabel?: string,
@@ -2160,12 +2175,12 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
   ) => {
     const hours = normalizeActivityHours(nextHours);
     const cleanLabel = trimActivityLabel(nextLabel);
-    const existing = activities.find((item) => item.emoji === emoji);
+    const existing = sourceActivities.find((item) => item.emoji === emoji);
     if (hours <= 0) {
-      return activities.filter((item) => item.emoji !== emoji);
+      return sourceActivities.filter((item) => item.emoji !== emoji);
     }
     if (existing) {
-      return activities.map((item) =>
+      return sourceActivities.map((item) =>
         item.emoji === emoji
           ? {
               ...item,
@@ -2186,7 +2201,7 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
         endTime: formatStartTime(nextEndTime),
         hours
       },
-      ...activities
+      ...sourceActivities
     ];
   };
 
@@ -2279,7 +2294,9 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
 
   /** 활동 시간 갱신 (로컬 state + 로그인 시 DB 저장) */
 const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, nextStartTime?: string, nextEndTime?: string) => {
-    const updated = composeUpdatedActivities(emoji, nextHours, nextLabel, nextStartTime, nextEndTime);
+    const sourceActivities = activitiesRef.current;
+    const updated = composeUpdatedActivities(sourceActivities, emoji, nextHours, nextLabel, nextStartTime, nextEndTime);
+    activitiesRef.current = updated;
     setActivities(updated);
     setIsActivityDirty(true);
     if (!user) {
@@ -2287,7 +2304,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
       setIsActivityDirty(false);
       return;
     }
-    const source = activities.find((item) => item.emoji === emoji);
+    const source = sourceActivities.find((item) => item.emoji === emoji);
     const current = updated.find((item) => item.emoji === emoji);
     void saveActivity(
       emoji,
@@ -2299,7 +2316,14 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   };
 
   const setActivityHours = (activity: UiActivity, nextHours: number) => {
-    updateActivity(activity.emoji, nextHours, activity.label);
+    const normalizedNextHours = normalizeActivityHours(nextHours);
+    if (hasExplicitTimeInput(activity)) {
+      const normalizedStartTime = formatStartTime(activity.startTime ?? "00:00");
+      const nextEndTime = calculateEndTimeFromHours(normalizedStartTime, normalizedNextHours);
+      updateActivity(activity.emoji, normalizedNextHours, activity.label, normalizedStartTime, nextEndTime);
+      return;
+    }
+    updateActivity(activity.emoji, normalizedNextHours, activity.label);
   };
 
   const getActivityStepHours = () => activityStepMinutes / 60;
@@ -2327,9 +2351,16 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
   const setActivityStartTime = (activity: UiActivity, nextStartTime: string) => {
     const normalizedStartTime = formatStartTime(nextStartTime);
-    const recalculated = calculateHoursFromRange(normalizedStartTime, activity.endTime);
+    if (!hasStoredExplicitEndTime(activity)) {
+      const preservedEndTime = calculateEndTimeFromHours(normalizedStartTime, activity.hours);
+      updateActivity(activity.emoji, activity.hours, activity.label, normalizedStartTime, preservedEndTime);
+      return;
+    }
+
+    const currentEndTime = formatStartTime(activity.endTime ?? "00:00");
+    const recalculated = calculateHoursFromRange(normalizedStartTime, currentEndTime);
     const nextHours = recalculated ?? activity.hours;
-    updateActivity(activity.emoji, nextHours, activity.label, normalizedStartTime, activity.endTime);
+    updateActivity(activity.emoji, nextHours, activity.label, normalizedStartTime, currentEndTime);
   };
 
   const setActivityEndTime = (activity: UiActivity, nextEndTime: string) => {
@@ -2343,12 +2374,12 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
   /** 퀵 이모지 버튼 클릭: 기존 있으면 +step, 없으면 새로 step 추가 */
   const addActivityFromTemplate = (emoji: string) => {
-    const keyItem = activities.find((item) => item.emoji === emoji);
+    const keyItem = activitiesRef.current.find((item) => item.emoji === emoji);
     const step = getActivityStepHours();
     if (keyItem) {
       updateActivity(emoji, keyItem.hours + step, keyItem.label);
     } else {
-      updateActivity(emoji, step, "");
+      updateActivity(emoji, DEFAULT_TEMPLATE_ACTIVITY_HOURS, "");
     }
     setActivityLabelEditingByDate((prev) => ({
       ...prev,
@@ -3850,6 +3881,16 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           {/* ── Dashboard (daily flow) ── */}
           {activeDiaryTab === "dashboard" ? (
           <section className="fade-up overflow-hidden rounded-2xl border border-[var(--border)] shadow-sm">
+              <div className="flex justify-end border-b border-[var(--border)] px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveDiaryTab("home")}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[var(--primary-hover)]"
+                >
+                  <House className="h-3.5 w-3.5" />
+                  <span>{t("Home", "홈")}</span>
+                </button>
+              </div>
               {/* Row 1: title + week/month toggle */}
               <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
                 <div className="flex min-w-0 items-center gap-1.5">
@@ -4123,16 +4164,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   </div>
                 </>
               )}
-              <div className="px-3 pb-3 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setActiveDiaryTab("home")}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--primary-hover)]"
-                >
-                  <House className="h-4 w-4" />
-                  <span>{t("Home", "홈")}</span>
-                </button>
-              </div>
                   </div>
           </section>
           ) : null}
