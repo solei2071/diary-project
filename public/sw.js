@@ -1,4 +1,4 @@
-const SW_CACHE_NAME = "daily-flow-diary-v3";
+const SW_CACHE_NAME = "daily-flow-diary-v4";
 const OFFLINE_URL = "/offline.html";
 const IS_LOCAL_DEV_HOST = ["localhost", "127.0.0.1", "::1"].includes(self.location.hostname);
 
@@ -51,10 +51,15 @@ const isStaticRequest = (request) => {
   const requestUrl = new URL(request.url);
   if (requestUrl.origin !== self.location.origin) return false;
   return (
-    requestUrl.pathname.startsWith("/_next/static/") ||
     requestUrl.pathname === "/manifest.webmanifest" ||
     /\.(?:js|css|png|jpg|jpeg|webp|avif|gif|svg|ico|woff2?|ttf|json)$/.test(requestUrl.pathname)
   );
+};
+
+const isNextStaticChunkRequest = (request) => {
+  if (request.method !== "GET") return false;
+  const requestUrl = new URL(request.url);
+  return requestUrl.origin === self.location.origin && requestUrl.pathname.startsWith("/_next/static/");
 };
 
 const isHtmlResponse = (response) => {
@@ -126,6 +131,11 @@ self.addEventListener("fetch", (event) => {
         }
       })()
     );
+    return;
+  }
+
+  if (isNextStaticChunkRequest(request)) {
+    event.respondWith(networkFirst(request));
     return;
   }
 
