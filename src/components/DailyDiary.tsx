@@ -4091,7 +4091,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       {journalNotes.map((note, index) => (
                         <div
                           key={`saved-note-${index}`}
-                          className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-3 py-3"
+                          className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-3"
                         >
                           <p className="break-words whitespace-pre-wrap text-xs leading-5 text-[var(--ink)]">
                             {note}
