@@ -235,6 +235,7 @@ export default function Home() {
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [showProUpgrade, setShowProUpgrade] = useState(false);
   const [proUpgradeSource, setProUpgradeSource] = useState<"general" | "notes">("general");
+  const [suppressTriggeredProUpgrade, setSuppressTriggeredProUpgrade] = useState(false);
   const [proPricing, setProPricing] = useState<{ title: string | null; priceLabel: string | null }>({
     title: null,
     priceLabel: null
@@ -471,6 +472,26 @@ export default function Home() {
     setSettingsPanel("settings");
     setSettingsDetailSection("root");
   };
+  const openManualProUpgrade = useCallback((source: "general" | "notes" = "general") => {
+    setSuppressTriggeredProUpgrade(false);
+    setProUpgradeSource(source);
+    setShowProUpgrade(true);
+  }, []);
+
+  const requestTriggeredProUpgrade = useCallback((source: "general" | "notes" = "general") => {
+    if (suppressTriggeredProUpgrade || showProUpgrade) {
+      return;
+    }
+    setProUpgradeSource(source);
+    setShowProUpgrade(true);
+  }, [showProUpgrade, suppressTriggeredProUpgrade]);
+
+  const closeProUpgrade = useCallback(() => {
+    setShowProUpgrade(false);
+    setProUpgradeSource("general");
+    setSuppressTriggeredProUpgrade(true);
+  }, []);
+
   const signOut = async () => {
     const userId = session?.user?.id ?? null;
     await supabase.auth.signOut();
@@ -517,6 +538,12 @@ export default function Home() {
     setSettingsPanel("settings");
     setSettingsDetailSection("plan");
   };
+
+  useEffect(() => {
+    if (isPro) {
+      setSuppressTriggeredProUpgrade(false);
+    }
+  }, [isPro]);
 
   const openSubscriptionManagement = async () => {
     setAccountError("");
@@ -1697,7 +1724,7 @@ export default function Home() {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => { setProUpgradeSource("general"); setShowProUpgrade(true); }}
+                            onClick={() => openManualProUpgrade("general")}
                             className="shrink-0 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-600 hover:bg-amber-100"
                           >
                             {t("Upgrade", "업그레이드")}
@@ -1779,7 +1806,7 @@ export default function Home() {
                       {isPro ? null : (
                         <>
                           <button
-                            onClick={() => { closeSettings(); setProUpgradeSource("general"); setShowProUpgrade(true); }}
+                            onClick={() => { closeSettings(); openManualProUpgrade("general"); }}
                             className="mt-2 w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white"
                           >
                             {t("Unlock Pro", "Pro 잠금 해제")}
@@ -1912,7 +1939,7 @@ export default function Home() {
                       ) : (
                         <button
                           type="button"
-                          onClick={() => { closeSettings(); setProUpgradeSource("general"); setShowProUpgrade(true); }}
+                          onClick={() => { closeSettings(); openManualProUpgrade("general"); }}
                           className="shrink-0 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-600 hover:bg-amber-100"
                         >
                           {t("Upgrade", "업그레이드")}
@@ -2044,8 +2071,7 @@ export default function Home() {
                     <button
                       onClick={() => {
                         closeSettings();
-                        setProUpgradeSource("general");
-                        setShowProUpgrade(true);
+                        openManualProUpgrade("general");
                       }}
                       className="mt-2 w-full rounded-md bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white"
                     >
@@ -2310,10 +2336,7 @@ export default function Home() {
           <DailyDiary
             session={session}
             onRequestAuth={() => setAuthMode("login")}
-            onRequestProUpgrade={(source = "general") => {
-              setProUpgradeSource(source);
-              setShowProUpgrade(true);
-            }}
+            onRequestProUpgrade={requestTriggeredProUpgrade}
             symbolPlan={symbolPlan}
             planFeatures={planInfo.features}
             appLanguage={appLanguage}
@@ -2413,10 +2436,7 @@ export default function Home() {
       <ProUpgradeSheet
         visible={showProUpgrade}
         source={proUpgradeSource}
-        onClose={() => {
-          setShowProUpgrade(false);
-          setProUpgradeSource("general");
-        }}
+        onClose={closeProUpgrade}
         onSubscribe={() => void handlePurchasePro()}
         onRestore={() => void handleRestorePurchase()}
         appLanguage={appLanguage}

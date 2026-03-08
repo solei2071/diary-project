@@ -24,6 +24,7 @@ type SymbolPickerProps = {
   currentSymbols: UserSymbol[];
   onSymbolsChange: (symbols: UserSymbol[]) => void;
   onClose: () => void;
+  onLimitReached?: () => void;
   maxSymbols?: number;
   labelCharacterLimit?: number;
   appLanguage?: "en" | "ko";
@@ -33,6 +34,7 @@ function SymbolPicker({
   currentSymbols,
   onSymbolsChange,
   onClose,
+  onLimitReached,
   maxSymbols: maxSymbolsOverride,
   labelCharacterLimit = 30,
   appLanguage = "en"
@@ -115,6 +117,7 @@ function SymbolPicker({
 
     if (isLimitReached) {
       setLimitReachedMessage(t(`Maximum ${maxSymbols} symbols reached`, `기호는 최대 ${maxSymbols}개까지 선택할 수 있어요`));
+      onLimitReached?.();
       return;
     }
 
@@ -142,6 +145,7 @@ function SymbolPicker({
     } else {
       if (isLimitReached) {
         setLimitReachedMessage(t(`Maximum ${maxSymbols} symbols reached`, `기호는 최대 ${maxSymbols}개까지 선택할 수 있어요`));
+        onLimitReached?.();
         return;
       }
       // 추가

@@ -648,6 +648,7 @@ export default function DailyDiary({
   const [isSavingActivity, setIsSavingActivity] = useState(false);
   const [journalText, setJournalText] = useState("");
   const [journalNotes, setJournalNotes] = useState<string[]>([]);
+  const [activeJournalNoteIndex, setActiveJournalNoteIndex] = useState<number | null>(null);
   const [todoError, setTodoError] = useState("");
   const [journalError, setJournalError] = useState("");
   const [activityError, setActivityError] = useState("");
@@ -684,7 +685,9 @@ export default function DailyDiary({
   const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
   const [showDoneTodos, setShowDoneTodos] = useState(false);
   const [notesAutoSaveStatus, setNotesAutoSaveStatus] = useState<"idle" | "saved">("idle");
-  const noteAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteComposeDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteAutoSaveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [customEmoji, setCustomEmoji] = useState("");
   const [customHours, setCustomHours] = useState("");
   const [customStartTime, setCustomStartTime] = useState("");
@@ -1756,6 +1759,37 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     });
   }, [selectedDate, showToast, t]);
 
+  const persistComposeDraft = useCallback((text: string) => {
+    const normalizedText = text.slice(0, NOTE_CHAR_LIMIT);
+    if (!normalizedText.trim()) {
+      try { localStorage.removeItem(NOTE_DRAFT_COMPOSE_KEY); } catch { /* no-op */ }
+      return;
+    }
+
+    try {
+      localStorage.setItem(
+        NOTE_DRAFT_COMPOSE_KEY,
+        JSON.stringify({ date: selectedDate, text: normalizedText })
+      );
+    } catch {
+      // no-op
+    }
+  }, [selectedDate]);
+
+  const clearComposeDraft = useCallback(() => {
+    try { localStorage.removeItem(NOTE_DRAFT_COMPOSE_KEY); } catch { /* no-op */ }
+  }, []);
+
+  const showNotesAutoSaveFeedback = useCallback(() => {
+    setNotesAutoSaveStatus("saved");
+    if (noteAutoSaveStatusTimerRef.current) {
+      clearTimeout(noteAutoSaveStatusTimerRef.current);
+    }
+    noteAutoSaveStatusTimerRef.current = setTimeout(() => {
+      setNotesAutoSaveStatus("idle");
+    }, 2000);
+  }, []);
+
   const updateDraftActivities = (items: UiActivity[]) => {
     setDraftActivitiesByDate((prev) => {
       const mapped = items
@@ -2622,26 +2656,124 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     if (journalError) {
       setJournalError("");
     }
-    // Auto-save draft to localStorage after 1.5s of no typing
-    if (noteAutoSaveTimerRef.current) clearTimeout(noteAutoSaveTimerRef.current);
-    noteAutoSaveTimerRef.current = setTimeout(() => {
-      if (!next.trim()) return;
-      try {
-        localStorage.setItem(NOTE_DRAFT_COMPOSE_KEY, JSON.stringify({ date: selectedDate, text: next }));
-      } catch { /* no-op */ }
-      setNotesAutoSaveStatus("saved");
-      setTimeout(() => setNotesAutoSaveStatus("idle"), 2000);
-    }, 1500);
+    // Keep a short-lived compose draft so text survives refresh before auto-save runs.
+    if (noteComposeDraftTimerRef.current) clearTimeout(noteComposeDraftTimerRef.current);
+    noteComposeDraftTimerRef.current = setTimeout(() => {
+      persistComposeDraft(next);
+    }, 300);
   };
 
+  const persistJournalNotes = useCallback(async (
+    nextNotes: string[],
+    options?: {
+      clearInput?: boolean;
+      showToastOnSuccess?: boolean;
+      statusText?: "saved" | "idle";
+      composeText?: string;
+      nextActiveIndex?: number | null;
+    }
+  ) => {
+    const serialized = serializeJournalNotes(nextNotes);
+
+    setJournalError("");
+    setIsJournalDirty(true);
+
+    if (await hasSyncConflictForSave("journal", selectedDate)) {
+      setIsJournalDirty(false);
+      return false;
+    }
+
+    if (!user) {
+      updateDraftJournal(serialized);
+      setMonthJournalByDate((prev) => ({ ...prev, [selectedDate]: serialized }));
+      setJournalNotes(nextNotes);
+      setJournalUpdatedAt(new Date().toISOString());
+      setActiveJournalNoteIndex(options?.nextActiveIndex ?? null);
+      if (options?.clearInput) {
+        setJournalText("");
+      } else if (options?.composeText !== undefined) {
+        setJournalText(options.composeText);
+      }
+      clearComposeDraft();
+      setIsJournalDirty(false);
+      if (options?.statusText === "saved") {
+        showNotesAutoSaveFeedback();
+      } else if (options?.statusText === "idle") {
+        setNotesAutoSaveStatus("idle");
+      }
+      if (options?.showToastOnSuccess) {
+        showToast(t("Note saved", "노트를 저장했습니다."), "success");
+      }
+      return true;
+    }
+
+    const { data, error } = await supabase
+      .from("journal_entries")
+      .upsert(
+        {
+          user_id: user.id,
+          entry_date: selectedDate,
+          content: serialized
+        },
+        { onConflict: "user_id,entry_date" }
+      )
+      .select("content, updated_at")
+      .single<{ content: string | null; updated_at: string | null }>();
+
+    if (error) {
+      setJournalError(getSafeSupabaseError(error.message));
+      setIsJournalDirty(false);
+      return false;
+    }
+
+    updateDraftJournal(serialized);
+    setJournalNotes(nextNotes);
+    setMonthJournalByDate((prev) => ({ ...prev, [selectedDate]: data?.content ?? serialized }));
+    setJournalUpdatedAt(data?.updated_at ?? new Date().toISOString());
+    setActiveJournalNoteIndex(options?.nextActiveIndex ?? null);
+    if (options?.clearInput) {
+      setJournalText("");
+    } else if (options?.composeText !== undefined) {
+      setJournalText(options.composeText);
+    }
+    clearComposeDraft();
+    setIsJournalDirty(false);
+    if (options?.statusText === "saved") {
+      showNotesAutoSaveFeedback();
+    } else if (options?.statusText === "idle") {
+      setNotesAutoSaveStatus("idle");
+    }
+    if (options?.showToastOnSuccess) {
+      showToast(t("Note saved", "노트를 저장했습니다."), "success");
+    }
+    return true;
+  }, [
+    clearComposeDraft,
+    hasSyncConflictForSave,
+    selectedDate,
+    showNotesAutoSaveFeedback,
+    showToast,
+    t,
+    updateDraftJournal,
+    user
+  ]);
+
   const saveJournalNote = async () => {
+    if (notePersistTimerRef.current) {
+      clearTimeout(notePersistTimerRef.current);
+    }
+    if (noteComposeDraftTimerRef.current) {
+      clearTimeout(noteComposeDraftTimerRef.current);
+    }
+
     const nextNote = journalText.trim();
     if (!nextNote) {
       setJournalError(t("Please write a note first.", "먼저 노트를 입력해 주세요."));
       return;
     }
 
-    if (journalNotes.length >= dailyNoteLimit) {
+    const isNewNote = activeJournalNoteIndex === null;
+    if (isNewNote && journalNotes.length >= dailyNoteLimit) {
       if (!isPro && dailyNoteLimit < proDailyNoteLimit) {
         setJournalError(t("Upgrade to Pro to save more notes today.", "오늘 노트를 더 저장하려면 Pro로 업그레이드해 주세요."));
         onRequestProUpgrade?.("notes");
@@ -2662,60 +2794,142 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     }
 
     const normalizedNote = nextNote.slice(0, NOTE_CHAR_LIMIT);
-    const nextNotes = normalizeJournalNotes([...journalNotes, normalizedNote]);
-    const serialized = serializeJournalNotes(nextNotes);
+    const nextNotes = isNewNote
+      ? normalizeJournalNotes([...journalNotes, normalizedNote])
+      : normalizeJournalNotes(
+          journalNotes.map((note, index) =>
+            index === activeJournalNoteIndex ? normalizedNote : note
+          )
+        );
+    await persistJournalNotes(nextNotes, {
+      clearInput: true,
+      showToastOnSuccess: true,
+      nextActiveIndex: null
+    });
+  };
 
-    setJournalError("");
-    setIsJournalDirty(true);
-
-    if (await hasSyncConflictForSave("journal", selectedDate)) {
-      setIsJournalDirty(false);
-      return;
+  const deleteJournalNote = async (noteIndex: number) => {
+    if (notePersistTimerRef.current) {
+      clearTimeout(notePersistTimerRef.current);
+    }
+    if (noteComposeDraftTimerRef.current) {
+      clearTimeout(noteComposeDraftTimerRef.current);
     }
 
-    if (!user) {
-      updateDraftJournal(serialized);
-      setMonthJournalByDate((prev) => ({ ...prev, [selectedDate]: serialized }));
-      setJournalNotes(nextNotes);
+    const nextNotes = journalNotes.filter((_, index) => index !== noteIndex);
+    const isDeletingActiveNote = activeJournalNoteIndex === noteIndex;
+    const nextActiveIndex =
+      activeJournalNoteIndex === null
+        ? null
+        : activeJournalNoteIndex > noteIndex
+          ? activeJournalNoteIndex - 1
+          : activeJournalNoteIndex;
+
+    const didPersist = await persistJournalNotes(nextNotes, {
+      clearInput: isDeletingActiveNote,
+      composeText: isDeletingActiveNote ? "" : journalText,
+      statusText: "idle",
+      nextActiveIndex: isDeletingActiveNote ? null : nextActiveIndex
+    });
+
+    if (!didPersist) return;
+
+    if (isDeletingActiveNote) {
+      clearComposeDraft();
       setJournalText("");
-      setIsJournalDirty(false);
-      try { localStorage.removeItem(NOTE_DRAFT_COMPOSE_KEY); } catch { /* no-op */ }
-      showToast(t("Note saved", "노트를 저장했습니다."), "success");
-      return;
     }
-
-    const { error } = await supabase
-      .from("journal_entries")
-      .upsert(
-        {
-          user_id: user.id,
-          entry_date: selectedDate,
-          content: serialized
-        },
-        { onConflict: "user_id,entry_date" }
-      );
-
-    if (error) {
-      setJournalError(getSafeSupabaseError(error.message));
-      setIsJournalDirty(false);
-      return;
-    }
-
-    updateDraftJournal(serialized);
-    setJournalNotes(nextNotes);
-    setJournalText("");
-    setIsJournalDirty(false);
-    try { localStorage.removeItem(NOTE_DRAFT_COMPOSE_KEY); } catch { /* no-op */ }
-    showToast(t("Note saved", "노트를 저장했습니다."), "success");
-    await loadData(selectedDate);
-    await loadMonthFlow(selectedDate);
+    showToast(t("Note deleted", "노트를 삭제했습니다."), "success");
   };
 
   // 날짜 전환 시 편집 상태 초기화 (이전 날짜의 편집 모드가 새 날짜에 남지 않도록)
   useEffect(() => {
     setActivityLabelEditingByDate({});
     setActivityLabelDrafts({});
+    setActiveJournalNoteIndex(null);
   }, [selectedDate]);
+
+  useEffect(() => {
+    if (notePersistTimerRef.current) {
+      clearTimeout(notePersistTimerRef.current);
+    }
+
+    const normalizedNote = journalText.trim().slice(0, NOTE_CHAR_LIMIT);
+    if (!normalizedNote) {
+      setNotesAutoSaveStatus("idle");
+      return;
+    }
+
+    if (
+      activeJournalNoteIndex !== null &&
+      journalNotes[activeJournalNoteIndex] === normalizedNote
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const isNewNote = activeJournalNoteIndex === null;
+      if (isNewNote && journalNotes.length >= dailyNoteLimit) {
+        if (!isPro && dailyNoteLimit < proDailyNoteLimit) {
+          setJournalError(t("Upgrade to Pro to save more notes today.", "오늘 노트를 더 저장하려면 Pro로 업그레이드해 주세요."));
+          onRequestProUpgrade?.("notes");
+          return;
+        }
+        setJournalError(
+          dailyNoteLimit === proDailyNoteLimit
+            ? t(
+                `You can save up to ${proDailyNoteLimit} notes per day on Pro.`,
+                `Pro 요금제는 하루 최대 ${proDailyNoteLimit}개 노트까지 저장할 수 있습니다.`
+              )
+            : t(
+                `Free plan allows up to ${dailyNoteLimit} note${dailyNoteLimit === 1 ? "" : "s"} per day. Upgrade to Pro for up to ${proDailyNoteLimit} notes.`,
+                `무료 플랜은 하루 최대 ${dailyNoteLimit}개 노트까지 저장할 수 있습니다. Pro로 업그레이드하면 최대 ${proDailyNoteLimit}개까지 저장할 수 있습니다.`
+              )
+        );
+        return;
+      }
+
+      const nextNotes = isNewNote
+        ? normalizeJournalNotes([...journalNotes, normalizedNote])
+        : normalizeJournalNotes(
+            journalNotes.map((note, index) =>
+              index === activeJournalNoteIndex ? normalizedNote : note
+            )
+          );
+
+      void persistJournalNotes(nextNotes, {
+        composeText: normalizedNote,
+        statusText: "saved",
+        nextActiveIndex: isNewNote ? nextNotes.length - 1 : activeJournalNoteIndex
+      });
+    }, 1200);
+
+    notePersistTimerRef.current = timer;
+    return () => clearTimeout(timer);
+  }, [
+    activeJournalNoteIndex,
+    dailyNoteLimit,
+    isPro,
+    journalNotes,
+    journalText,
+    onRequestProUpgrade,
+    persistJournalNotes,
+    proDailyNoteLimit,
+    t
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (noteComposeDraftTimerRef.current) {
+        clearTimeout(noteComposeDraftTimerRef.current);
+      }
+      if (notePersistTimerRef.current) {
+        clearTimeout(notePersistTimerRef.current);
+      }
+      if (noteAutoSaveStatusTimerRef.current) {
+        clearTimeout(noteAutoSaveStatusTimerRef.current);
+      }
+    };
+  }, []);
 
   // 날짜 전환 시 작성 중이던 노트 draft 복원
   useEffect(() => {
@@ -3534,6 +3748,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     appLanguage={appLanguage}
                     maxSymbols={symbolLimit}
                     labelCharacterLimit={planLimits.labelCharacterLimit}
+                    onLimitReached={() => onRequestProUpgrade?.("general")}
                     onSymbolsChange={handleSymbolPickerSymbolsChange}
                     onClose={closeSymbolPicker}
                   />
@@ -3807,6 +4022,19 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   </div>
                 ) : null}
               </div>
+              <div className="border-t border-[var(--border)] px-3 py-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveDiaryTab("home");
+                    setSelectedDate(today);
+                  }}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--primary-hover)]"
+                >
+                  <House className="h-4 w-4" />
+                  <span>{t("Home", "홈")}</span>
+                </button>
+              </div>
               </div>
             </section>
           ) : null}
@@ -3840,7 +4068,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       </p>
                       {notesAutoSaveStatus === "saved" && (
                         <span className="text-[11px] text-emerald-500 transition-opacity">
-                          ✓ {t("Draft saved", "임시 저장됨")}
+                          ✓ {t("Auto-saved", "자동 저장됨")}
                         </span>
                       )}
                     </div>
@@ -3859,11 +4087,27 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   {journalNotes.length === 0 ? (
                     <p className="text-xs text-[var(--muted)]">{t("No saved notes for today.", "오늘 저장된 노트가 없습니다.")}</p>
                   ) : (
-                    <div className="grid gap-1.5">
+                    <div className="grid gap-2">
                       {journalNotes.map((note, index) => (
-                        <p key={`saved-note-${index}`} className="break-words whitespace-pre-wrap text-xs leading-5 text-[var(--ink)]">
-                          {`- ${note}`}
-                        </p>
+                        <div
+                          key={`saved-note-${index}`}
+                          className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-3 py-3"
+                        >
+                          <p className="break-words whitespace-pre-wrap text-xs leading-5 text-[var(--ink)]">
+                            {note}
+                          </p>
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => void deleteJournalNote(index)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-500 transition-colors hover:bg-red-100 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20"
+                              aria-label={t("Delete note", "노트 삭제")}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>{t("Delete", "삭제")}</span>
+                            </button>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   )}
@@ -4234,6 +4478,8 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           onComplete={() => {
             markTabTourDone();
             setShowTabTour(false);
+            setActiveDiaryTab("home");
+            setSelectedDate(today);
           }}
         />
       )}
