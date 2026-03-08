@@ -1,5 +1,6 @@
 const SW_CACHE_NAME = "daily-flow-diary-v3";
 const OFFLINE_URL = "/offline.html";
+const IS_LOCAL_DEV_HOST = ["localhost", "127.0.0.1", "::1"].includes(self.location.hostname);
 
 const PRECACHE_URLS = [
   "/",
@@ -12,6 +13,11 @@ const PRECACHE_URLS = [
 ];
 
 self.addEventListener("install", (event) => {
+  if (IS_LOCAL_DEV_HOST) {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
+
   event.waitUntil(
     caches
       .open(SW_CACHE_NAME)
@@ -22,6 +28,17 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
+  if (IS_LOCAL_DEV_HOST) {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+        .then(() => self.registration.unregister())
+        .then(() => self.clients.claim())
+    );
+    return;
+  }
+
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== SW_CACHE_NAME).map((key) => caches.delete(key)))).then(() => self.clients.claim())
   );
@@ -85,6 +102,10 @@ const staleWhileRevalidate = async (request) => {
 };
 
 self.addEventListener("fetch", (event) => {
+  if (IS_LOCAL_DEV_HOST) {
+    return;
+  }
+
   const request = event.request;
   if (request.method !== "GET") return;
 
@@ -119,6 +140,10 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("message", (event) => {
+  if (IS_LOCAL_DEV_HOST) {
+    return;
+  }
+
   if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
   }

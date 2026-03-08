@@ -475,6 +475,7 @@ function SymbolPicker({
                       <div className="min-w-0 flex-1">
                         <input
                           autoFocus
+                          type="text"
                           draggable={false}
                           value={editingLabels[symbol.emoji] ?? ""}
                           onChange={(e) => updateLabel(symbol.emoji, e.target.value)}
@@ -501,6 +502,9 @@ function SymbolPicker({
                           }`}
                           placeholder={t("What does this mean?", "심볼 의미를 입력하세요")}
                           maxLength={labelCharacterLimit}
+                          inputMode="text"
+                          autoComplete="off"
+                          spellCheck={false}
                         />
                         {(editingLabels[symbol.emoji]?.length ?? 0) >=
                           labelCharacterLimit && (

@@ -1,12 +1,22 @@
 "use client";
 
 import { Award, Calendar, Clock, Target, TrendingUp, Zap } from "lucide-react";
+import {
+  previewCardClass,
+  previewLabelClass,
+  previewMutedClass,
+  previewPillClass,
+  previewPrimaryButtonClass,
+  previewSecondaryButtonClass,
+  previewSectionTitleClass,
+  previewTitleClass
+} from "@/components/figma/previewTheme";
 
 const stats = [
-  { icon: Target, label: "Tasks Completed", value: "24", change: "+12%", color: "bg-blue-500" },
-  { icon: Zap, label: "Streak Days", value: "7", change: "+2", color: "bg-yellow-500" },
-  { icon: Clock, label: "Hours Tracked", value: "42", change: "+5h", color: "bg-purple-500" },
-  { icon: Award, label: "Achievements", value: "8", change: "+1", color: "bg-green-500" }
+  { icon: Target, label: "Tasks Completed", value: "24", change: "+12%", tone: "from-blue-500 to-indigo-600" },
+  { icon: Zap, label: "Streak Days", value: "7", change: "+2", tone: "from-amber-400 to-orange-500" },
+  { icon: Clock, label: "Hours Tracked", value: "42", change: "+5h", tone: "from-slate-700 to-slate-900" },
+  { icon: Award, label: "Achievements", value: "8", change: "+1", tone: "from-emerald-500 to-teal-600" }
 ];
 
 const recentActivity = [
@@ -18,70 +28,92 @@ const recentActivity = [
 
 export function DashboardPanel() {
   return (
-    <div className="flex h-full flex-col bg-gradient-to-b from-gray-50 to-white px-4 pb-4">
+    <div className="flex h-full flex-col px-4 pb-5">
       <div className="pb-4 pt-2">
-        <h1 className="mb-1 text-3xl font-semibold">Dashboard</h1>
-        <p className="text-gray-500">Your productivity overview</p>
+        <p className={previewLabelClass}>Overview</p>
+        <h1 className={`mt-1 ${previewTitleClass}`}>Dashboard</h1>
+        <p className={`mt-2 max-w-[16rem] ${previewMutedClass}`}>
+          Metrics now sit on the same card system as notes and activity instead of looking like a separate product.
+        </p>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto">
-        <section className="grid grid-cols-2 gap-3">
-          {stats.map((stat) => (
-            <div
-              key={stat.label}
-              className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm transition-transform active:scale-[0.98]"
-            >
-              <div className={`${stat.color} mb-3 flex h-10 w-10 items-center justify-center rounded-full`}>
-                <stat.icon className="h-5 w-5 text-white" />
+      <div className="flex-1 space-y-4 overflow-y-auto pb-2">
+        <section className={`${previewCardClass} overflow-hidden`}>
+          <div className="bg-[linear-gradient(135deg,rgba(59,130,246,0.12),rgba(251,191,36,0.08))] px-5 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className={previewLabelClass}>This Week</p>
+                <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-[var(--ink)]">
+                  A clearer summary with less dashboard noise.
+                </h2>
               </div>
-              <p className="mb-1 text-2xl font-semibold text-gray-900">{stat.value}</p>
-              <p className="mb-1 text-xs text-gray-500">{stat.label}</p>
-              <p className="text-xs font-medium text-green-600">{stat.change}</p>
+              <span className={previewPillClass}>Updated today</span>
             </div>
-          ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 px-4 py-4">
+            {stats.map((stat) => (
+              <div key={stat.label} className="rounded-[24px] border border-[var(--border)] bg-[var(--bg-secondary)] p-4">
+                <div className={`mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br ${stat.tone} shadow-md`}>
+                  <stat.icon className="h-5 w-5 text-white" />
+                </div>
+                <p className="text-[24px] font-semibold tracking-[-0.03em] text-[var(--ink)]">{stat.value}</p>
+                <p className="mt-1 text-[12px] text-[var(--ink-light)]">{stat.label}</p>
+                <p className="mt-2 text-[12px] font-semibold text-emerald-600">{stat.change}</p>
+              </div>
+            ))}
+          </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-            <h2 className="font-semibold text-gray-900">Weekly Progress</h2>
-            <Calendar className="h-4 w-4 text-gray-400" />
+        <section className={`${previewCardClass} p-4`}>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className={previewLabelClass}>Progress</p>
+              <h2 className={`mt-1 ${previewSectionTitleClass}`}>Weekly rhythm</h2>
+            </div>
+            <Calendar className="h-4 w-4 text-[var(--muted)]" />
           </div>
-          <div className="px-4 py-4">
-            <div className="flex h-32 items-end justify-between gap-2">
-              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day, index) => {
-                const heights = [60, 80, 45, 90, 70, 85, 95];
-                return (
-                  <div key={day} className="flex flex-1 flex-col items-center gap-2">
-                    <div className="relative h-full w-full overflow-hidden rounded-lg bg-gray-100">
-                      <div
-                        className={`absolute bottom-0 w-full rounded-lg ${index === 6 ? "bg-blue-500" : "bg-gray-300"}`}
-                        style={{ height: `${heights[index]}%` }}
-                      />
-                    </div>
-                    <span className={`text-xs ${index === 6 ? "font-semibold text-blue-500" : "text-gray-500"}`}>
-                      {day}
-                    </span>
+
+          <div className="flex h-36 items-end justify-between gap-2">
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day, index) => {
+              const heights = [58, 78, 42, 88, 66, 82, 94];
+              return (
+                <div key={day} className="flex flex-1 flex-col items-center gap-2">
+                  <div className="relative h-full w-full overflow-hidden rounded-[18px] bg-[var(--bg-secondary)]">
+                    <div
+                      className={`absolute bottom-0 w-full rounded-[18px] ${
+                        index === 6 ? "bg-gradient-to-t from-blue-500 to-indigo-500" : "bg-slate-300"
+                      }`}
+                      style={{ height: `${heights[index]}%` }}
+                    />
                   </div>
-                );
-              })}
-            </div>
+                  <span className={`text-[11px] font-medium ${index === 6 ? "text-[var(--primary)]" : "text-[var(--muted)]"}`}>
+                    {day}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-            <h2 className="font-semibold text-gray-900">Recent Activity</h2>
-            <TrendingUp className="h-4 w-4 text-gray-400" />
+        <section className={`${previewCardClass} overflow-hidden`}>
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+            <div>
+              <p className={previewLabelClass}>Timeline</p>
+              <h2 className={`mt-1 ${previewSectionTitleClass}`}>Recent activity</h2>
+            </div>
+            <TrendingUp className="h-4 w-4 text-[var(--muted)]" />
           </div>
-          <div className="divide-y divide-gray-100">
+
+          <div className="divide-y divide-[var(--border)]">
             {recentActivity.map((activity) => (
-              <div key={`${activity.text}-${activity.time}`} className="flex items-center gap-3 px-4 py-3 transition-colors active:bg-gray-50">
-                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gray-100 text-xl">
+              <div key={`${activity.text}-${activity.time}`} className="flex items-center gap-3 px-4 py-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--bg-secondary)] text-xl">
                   {activity.emoji}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-gray-900">{activity.text}</p>
-                  <p className="text-xs text-gray-400">{activity.time}</p>
+                  <p className="truncate text-[14px] font-medium text-[var(--ink)]">{activity.text}</p>
+                  <p className="text-[12px] text-[var(--muted)]">{activity.time}</p>
                 </div>
               </div>
             ))}
@@ -89,19 +121,11 @@ export function DashboardPanel() {
         </section>
 
         <section className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            className="rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 p-4 text-left text-white shadow-lg transition-transform active:scale-[0.98]"
-          >
-            <p className="mb-1 text-sm opacity-90">Add</p>
-            <p className="font-semibold">New Task</p>
+          <button type="button" className={`${previewPrimaryButtonClass} w-full py-4 text-left`}>
+            <span>Add New Task</span>
           </button>
-          <button
-            type="button"
-            className="rounded-2xl bg-gradient-to-br from-purple-500 to-purple-600 p-4 text-left text-white shadow-lg transition-transform active:scale-[0.98]"
-          >
-            <p className="mb-1 text-sm opacity-90">View</p>
-            <p className="font-semibold">All Stats</p>
+          <button type="button" className={`${previewSecondaryButtonClass} w-full py-4 text-left`}>
+            <span>View All Stats</span>
           </button>
         </section>
       </div>

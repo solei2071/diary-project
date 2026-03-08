@@ -2,30 +2,33 @@
  * notifications.ts — 알림(리마인더) 관련 유틸
  *
  * - localStorage에 설정 저장
- * - iOS 네이티브: @capacitor/push-notifications (APNs)
+ * - iOS 네이티브: @capacitor/local-notifications
  * - Web: Notification API
  */
 
 const STORAGE_KEY = "diary-notification-settings";
 const DEFAULT_REMINDER_TIME = "20:00";
-
-type PushNotificationsPlugin = {
-  requestPermissions: () => Promise<{ receive: string }>;
-  register: () => Promise<void>;
-};
+const DAILY_REMINDER_NOTIFICATION_ID = 1001;
 
 type LocalNotificationsPlugin = {
+  checkPermissions: () => Promise<{ display: string }>;
+  requestPermissions: () => Promise<{ display: string }>;
   schedule: (options: {
     notifications: Array<{
       id: number;
       title: string;
       body: string;
-      schedule: { at: Date };
+      schedule: {
+        at?: Date;
+        on?: { hour?: number; minute?: number; second?: number };
+        repeats?: boolean;
+      };
       sound?: string;
       smallIcon?: string;
       iconColor?: string;
     }>;
   }) => Promise<void>;
+  cancel: (options: { notifications: Array<{ id: number }> }) => Promise<void>;
 };
 
 export type NotificationSettings = {
@@ -65,44 +68,43 @@ const isIosNative = (): boolean => {
   return Boolean(cap?.isNativePlatform?.()) && cap?.getPlatform?.() === "ios";
 };
 
-const getPushNotificationsPlugin = (): PushNotificationsPlugin | null => {
-  if (typeof window === "undefined") return null;
-  const cap = (window as { Capacitor?: { Plugins?: Record<string, unknown> } }).Capacitor;
-  const plugin = cap?.Plugins?.PushNotifications;
-  if (!plugin || typeof plugin !== "object") return null;
-  const maybePlugin = plugin as Partial<PushNotificationsPlugin>;
-  if (typeof maybePlugin.requestPermissions !== "function" || typeof maybePlugin.register !== "function") {
-    return null;
-  }
-  return maybePlugin as PushNotificationsPlugin;
-};
-
 const getLocalNotificationsPlugin = (): LocalNotificationsPlugin | null => {
   if (typeof window === "undefined") return null;
   const cap = (window as { Capacitor?: { Plugins?: Record<string, unknown> } }).Capacitor;
   const plugin = cap?.Plugins?.LocalNotifications;
   if (!plugin || typeof plugin !== "object") return null;
   const maybePlugin = plugin as Partial<LocalNotificationsPlugin>;
-  if (typeof maybePlugin.schedule !== "function") return null;
+  if (
+    typeof maybePlugin.checkPermissions !== "function" ||
+    typeof maybePlugin.requestPermissions !== "function" ||
+    typeof maybePlugin.schedule !== "function" ||
+    typeof maybePlugin.cancel !== "function"
+  ) {
+    return null;
+  }
   return maybePlugin as LocalNotificationsPlugin;
 };
 
+const mapNotificationPermission = (value: string | undefined): NotificationPermission => {
+  if (value === "granted") return "granted";
+  if (value === "denied") return "denied";
+  return "default";
+};
+
+export const usesNativeNotificationScheduling = (): boolean => isIosNative();
+
 /**
  * 알림 권한 요청.
- * iOS 네이티브: APNs 권한 프롬프트.
+ * iOS 네이티브: 로컬 알림 권한 프롬프트.
  * Web: Notification API.
  */
 export async function requestNotificationPermission(): Promise<NotificationPermission> {
   if (isIosNative()) {
     try {
-      const pushNotifications = getPushNotificationsPlugin();
-      if (!pushNotifications) return "denied";
-      const result = await pushNotifications.requestPermissions();
-      if (result.receive === "granted") {
-        await pushNotifications.register();
-        return "granted";
-      }
-      return "denied";
+      const localNotifications = getLocalNotificationsPlugin();
+      if (!localNotifications) return "denied";
+      const result = await localNotifications.requestPermissions();
+      return mapNotificationPermission(result.display);
     } catch {
       return "denied";
     }
@@ -117,14 +119,16 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
   return await Notification.requestPermission();
 }
 
-/**
- * 현재 알림 권한 상태 조회.
- */
-export function getNotificationPermission(): NotificationPermission | "unsupported" {
+export async function getNotificationPermissionStatus(): Promise<NotificationPermission | "unsupported"> {
   if (isIosNative()) {
-    // 네이티브에서는 동기 확인 불가 — 저장된 설정 기준으로 반환
-    const settings = loadNotificationSettings();
-    return settings.enabled ? "granted" : "default";
+    try {
+      const localNotifications = getLocalNotificationsPlugin();
+      if (!localNotifications) return "unsupported";
+      const result = await localNotifications.checkPermissions();
+      return mapNotificationPermission(result.display);
+    } catch {
+      return "default";
+    }
   }
   if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
   return Notification.permission;
@@ -151,40 +155,60 @@ const parseReminderTime = (value: string): [number, number] => {
   return [normalizedHour, normalizedMinute];
 };
 
+export async function syncNotificationSchedule(settings: NotificationSettings): Promise<void> {
+  if (!isIosNative()) return;
+
+  const localNotifications = getLocalNotificationsPlugin();
+  if (!localNotifications) return;
+
+  try {
+    await localNotifications.cancel({
+      notifications: [{ id: DAILY_REMINDER_NOTIFICATION_ID }]
+    });
+  } catch {
+    // no-op
+  }
+
+  if (!settings.enabled) return;
+
+  const [hour, minute] = parseReminderTime(settings.reminderTime);
+
+  try {
+    await localNotifications.schedule({
+      notifications: [
+        {
+          id: DAILY_REMINDER_NOTIFICATION_ID,
+          title: "Daily Flow Diary",
+          body: "Time to record today's activities and reflections.",
+          schedule: {
+            on: { hour, minute, second: 0 },
+            repeats: true
+          },
+          sound: undefined,
+          smallIcon: "ic_notification",
+          iconColor: "#2563eb"
+        }
+      ]
+    });
+  } catch {
+    // no-op
+  }
+}
+
 /**
  * 로컬 리마인더 알림 표시.
- * iOS 네이티브: @capacitor/push-notifications LocalNotifications 스케줄.
+ * iOS 네이티브: 반복 로컬 알림 스케줄을 동기화.
  * Web: Notification API (앱이 열려 있는 동안만 유효).
  */
 export async function showDailyReminder(settings: NotificationSettings): Promise<void> {
   if (!settings.enabled) return;
-  if (settings.lastShownDate === todayString()) return;
 
   if (isIosNative()) {
-    try {
-      const localNotifications = getLocalNotificationsPlugin();
-      if (!localNotifications) return;
-
-      await localNotifications.schedule({
-        notifications: [
-          {
-            id: 1001,
-            title: "Daily Flow Diary",
-            body: "Time to record today's activities and reflections ✍️",
-            schedule: { at: new Date() },
-            sound: undefined,
-            smallIcon: "ic_notification",
-            iconColor: "#6366f1"
-          }
-        ]
-      });
-
-      saveNotificationSettings({ ...settings, lastShownDate: todayString() });
-    } catch {
-      // no-op
-    }
+    await syncNotificationSchedule(settings);
     return;
   }
+
+  if (settings.lastShownDate === todayString()) return;
 
   // Web fallback
   if (Notification.permission !== "granted") return;

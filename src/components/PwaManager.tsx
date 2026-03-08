@@ -5,7 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   loadNotificationSettings,
   msUntilReminderTime,
-  showDailyReminder
+  showDailyReminder,
+  syncNotificationSchedule,
+  usesNativeNotificationScheduling
 } from "@/lib/notifications";
 
 type BeforeInstallPromptEvent = Event & {
@@ -141,6 +143,10 @@ export default function PwaManager({ appLanguage: appLanguageProp }: Props) {
     const scheduleReminder = () => {
       const settings = loadNotificationSettings();
       if (!settings.enabled) return;
+      if (usesNativeNotificationScheduling()) {
+        void syncNotificationSchedule(settings);
+        return;
+      }
       if (!("Notification" in window) || Notification.permission !== "granted") return;
 
       if (notifTimerRef.current) clearTimeout(notifTimerRef.current);

@@ -90,6 +90,14 @@ export type PurchaseResult<T = void> = {
   error?: string;
 };
 
+export type ProMonthlyPricing = {
+  title: string;
+  description: string;
+  price: number;
+  priceString: string;
+  currencyCode: string;
+};
+
 // ---------------------------------------------------------------------------
 // Platform detection
 // ---------------------------------------------------------------------------
@@ -132,6 +140,20 @@ const getPlugin = (): Promise<CapacitorPurchasesPlugin> => {
 // ---------------------------------------------------------------------------
 
 let _initialized = false;
+
+const resolveProMonthlyPackage = (offerings: Offerings): RCPackage | null => {
+  if (!offerings.current) return null;
+
+  if (offerings.current.monthly) {
+    return offerings.current.monthly;
+  }
+
+  return (
+    offerings.current.availablePackages.find(
+      (pkg) => pkg.product.identifier === PRO_MONTHLY_PRODUCT_ID
+    ) ?? null
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -195,6 +217,36 @@ export const getOfferings = async (): Promise<PurchaseResult<Offerings>> => {
   }
 };
 
+export const getProMonthlyPricing = async (): Promise<PurchaseResult<ProMonthlyPricing | null>> => {
+  if (!isIosNative()) {
+    return { ok: true, data: null };
+  }
+
+  try {
+    const plugin = await getPlugin();
+    const { offerings } = await plugin.getOfferings();
+    const targetPackage = resolveProMonthlyPackage(offerings);
+
+    if (!targetPackage) {
+      return { ok: true, data: null };
+    }
+
+    return {
+      ok: true,
+      data: {
+        title: targetPackage.product.title,
+        description: targetPackage.product.description,
+        price: targetPackage.product.price,
+        priceString: targetPackage.product.priceString,
+        currencyCode: targetPackage.product.currencyCode
+      }
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to fetch product pricing.";
+    return { ok: false, error: message };
+  }
+};
+
 /**
  * Purchase the Pro monthly subscription.
  *
@@ -221,16 +273,7 @@ export const purchaseProMonthly = async (): Promise<PurchaseResult<CustomerInfo>
       return { ok: false, error: "No offerings available. Please try again later." };
     }
 
-    // Try to find the monthly package from the current offering
-    let targetPackage: RCPackage | null = offerings.current.monthly ?? null;
-
-    // Fallback: scan all packages for the matching product ID
-    if (!targetPackage) {
-      targetPackage =
-        offerings.current.availablePackages.find(
-          (pkg) => pkg.product.identifier === PRO_MONTHLY_PRODUCT_ID
-        ) ?? null;
-    }
+    const targetPackage = resolveProMonthlyPackage(offerings);
 
     if (!targetPackage) {
       return {

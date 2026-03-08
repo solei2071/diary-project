@@ -49,10 +49,10 @@
 }
 
 .dark {
-  --bg: #111827;
-  --bg-secondary: #1f2937;
-  --bg-hover: rgba(255, 255, 255, 0.08);
-  --bg-selected: rgba(96, 165, 250, 0.2);
+  --bg: #131720;
+  --bg-secondary: #1c2130;
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --bg-selected: rgba(96, 165, 250, 0.18);
 
   --ink: #e5e7eb;
   --ink-light: #cbd5e1;
@@ -74,6 +74,10 @@
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 html,
@@ -256,13 +260,13 @@ select {
   gap: 0.4rem;
   padding: 0.4rem 0.85rem;
   font-size: 0.85rem;
-  font-weight: 500;
+  font-weight: 600;
   color: #fff;
   background: var(--primary);
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.15s ease, opacity 0.15s ease;
+  transition: background 0.15s ease, opacity 0.15s ease, transform 0.1s ease;
   white-space: nowrap;
 }
 
@@ -270,9 +274,14 @@ select {
   background: var(--primary-hover);
 }
 
+.n-btn-primary:active {
+  transform: scale(0.97);
+}
+
 .n-btn-primary:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+  transform: none;
 }
 
 /* Ghost — Notion의 텍스트 버튼 */
@@ -323,16 +332,17 @@ select {
   font-size: 0.9rem;
   font-family: inherit;
   color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   outline: none;
 }
 
 .n-input:focus {
+  background: var(--bg);
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(35, 131, 226, 0.2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent);
 }
 
 .n-input::placeholder {
@@ -349,14 +359,15 @@ select {
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   resize: vertical;
-  line-height: 1.7;
+  line-height: 1.75;
   outline: none;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .n-textarea:focus {
   background: var(--bg);
-  border-color: var(--border-strong);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent);
 }
 
 .n-textarea::placeholder {
@@ -412,14 +423,14 @@ select {
 }
 
 .n-calendar-day--selected {
-  background: var(--ink);
+  background: var(--primary);
   color: #fff;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .dark .n-calendar-day--selected {
-  background: var(--ink);
-  color: var(--bg);
+  background: var(--primary);
+  color: #fff;
 }
 
 .n-calendar-day--selected:hover {
@@ -487,11 +498,11 @@ textarea {
 }
 
 .fade-up {
-  animation: fadeUp 0.25s ease-out both;
+  animation: fadeUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .card-enter {
-  animation: fadeUp 0.25s ease-out both;
+  animation: fadeUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .n-input-shake {
@@ -506,11 +517,11 @@ textarea {
 @keyframes fadeUp {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(12px) scale(0.99);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 

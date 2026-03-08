@@ -35,8 +35,6 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>NSCameraUsageDescription</key>
-	<string>Daily Flow Diary may use the camera to capture activity photos.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Daily Flow Diary uses Face ID to protect your diary with app lock.</string>
 	<key>UIRequiredDeviceCapabilities</key>
@@ -62,11 +60,6 @@
 				<string>com.dailyflow.diary</string>
 			</array>
 		</dict>
-	</array>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>fetch</string>
-		<string>remote-notification</string>
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>

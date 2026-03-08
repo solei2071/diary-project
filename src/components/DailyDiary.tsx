@@ -12,7 +12,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DragEvent, KeyboardEvent, MouseEvent, TouchEvent } from "react";
 import {
   CheckCircle2,
@@ -20,13 +20,13 @@ import {
   ChevronRight,
   Clock3,
   FileText,
+  House,
   Loader2,
   Palette,
   Search,
   Settings,
   Trash2,
   ListTodo,
-  LayoutDashboard,
   PenSquare,
 } from "lucide-react";
 import { useToast } from "./Toast";
@@ -42,10 +42,12 @@ import {
   type UserSymbolPlan
 } from "@/lib/user-symbols";
 import type { UserSymbol } from "@/lib/user-symbols";
+import { hasCompletedOnboarding, hasCompletedTabTour, markTabTourDone } from "@/lib/onboarding";
 
 const SymbolPicker = dynamic(() => import("./SymbolPicker"), { ssr: false });
 const SearchModal = dynamic(() => import("./SearchModal"), { ssr: false });
 const StatsModal = dynamic(() => import("./StatsModal"), { ssr: false });
+const TabTour = dynamic(() => import("./TabTour"), { ssr: false });
 
 /** Date → YYYY-MM-DD (로컬 기준. toISOString은 UTC라 한국 등에서 하루 밀림) */
 function toLocalDateString(date: Date): string {
@@ -57,6 +59,7 @@ function toLocalDateString(date: Date): string {
 
 const initialDate = toLocalDateString(new Date());
 const NOTE_CHAR_LIMIT = 1000;
+const NOTE_DRAFT_COMPOSE_KEY = "diary-note-draft-compose";
 const JOURNAL_NOTES_PREFIX = "journal-notes-v2::";
 const TODO_REPEAT_DEFAULT_PLUS_DAYS = 14;
 const TODO_REPEAT_MAX_PLUS_DAYS = 365;
@@ -323,15 +326,17 @@ type SyncConflictState = {
   date: string;
 };
 
-type DiaryTab = "home" | "todo" | "activity" | "dashboard" | "notes";
+type DiaryTab = "home" | "todo" | "activity" | "dashboard" | "notes" | "settings";
 type PdfRange = "day" | "week" | "month";
 
 type Props = {
   session: Session | null;
   onRequestAuth: () => void; // 비로그인 시 저장 요청 시 부모가 로그인 모달 띄우도록 호출
+  onRequestProUpgrade?: (source?: "general" | "notes") => void;
   symbolPlan?: UserSymbolPlan;
   planFeatures?: PlanFeatures;
   appLanguage?: "en" | "ko";
+  settingsContent?: ReactNode;
 };
 
 /** 시간 값을 분 단위로 정규화 (0.0167h=1m) */
@@ -621,9 +626,11 @@ function SwipeableTodoItem({ todo, onToggle, onEdit, onDelete, onEditTodoLabel, 
 export default function DailyDiary({
   session,
   onRequestAuth,
+  onRequestProUpgrade,
   symbolPlan: symbolPlanOverride,
   planFeatures: planFeaturesOverride,
-  appLanguage = "en"
+  appLanguage = "en",
+  settingsContent
 }: Props) {
   const isKorean = appLanguage === "ko";
   const t = useCallback((en: string, ko: string) => (isKorean ? ko : en), [isKorean]);
@@ -671,21 +678,27 @@ export default function DailyDiary({
   const [journalUpdatedAt, setJournalUpdatedAt] = useState<string | null>(null);
   const [todoUpdatedAt, setTodoUpdatedAt] = useState<string | null>(null);
   const [activityUpdatedAt, setActivityUpdatedAt] = useState<string | null>(null);
-  const [activeDiaryTab, setActiveDiaryTab] = useState<DiaryTab>("dashboard");
+  const [activeDiaryTab, setActiveDiaryTab] = useState<DiaryTab>("home");
+  const [showTabTour, setShowTabTour] = useState(false);
   const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
+  const [showDoneTodos, setShowDoneTodos] = useState(false);
+  const [notesAutoSaveStatus, setNotesAutoSaveStatus] = useState<"idle" | "saved">("idle");
+  const noteAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [customEmoji, setCustomEmoji] = useState("");
   const [customHours, setCustomHours] = useState("");
   const [customStartTime, setCustomStartTime] = useState("");
   const [activityLabelEditingByDate, setActivityLabelEditingByDate] = useState<Record<string, boolean>>({});
+  const [activityLabelDrafts, setActivityLabelDrafts] = useState<Record<string, string>>({});
   const [todoRepeatDays, setTodoRepeatDays] = useState<number[]>([]);
   const [todoRepeatPlusDays, setTodoRepeatPlusDays] = useState<number>(TODO_REPEAT_DEFAULT_PLUS_DAYS);
   const [isTodoRepeatSettingsOpen, setIsTodoRepeatSettingsOpen] = useState(false);
   const [activityConflictWarnings, setActivityConflictWarnings] = useState<Record<string, string>>({});
-  const diaryTabs: { id: Exclude<DiaryTab, "home">; label: string; icon: typeof ListTodo; compactLabel?: string }[] = [
+  const primaryTabs: { id: Exclude<DiaryTab, "dashboard">; label: string; icon: typeof ListTodo; compactLabel?: string }[] = [
+    { id: "home", label: t("Home", "홈"), compactLabel: t("Home", "홈"), icon: House },
     { id: "activity", label: t("Activity", "활동"), compactLabel: t("activity", "활동"), icon: Clock3 },
     { id: "notes", label: t("Notes", "노트"), icon: FileText },
     { id: "todo", label: t("To-do", "할 일"), icon: ListTodo },
-    { id: "dashboard", label: t("Dashboard", "대시보드"), compactLabel: t("dash", "대시"), icon: LayoutDashboard }
+    { id: "settings", label: t("Setting", "설정"), compactLabel: t("Setting", "설정"), icon: Settings }
   ];
   const activityListRef = useRef<HTMLDivElement | null>(null);
   const activityTrashRef = useRef<HTMLDivElement | null>(null);
@@ -720,6 +733,7 @@ export default function DailyDiary({
     setIsSymbolPickerOpen(false);
   }, []);
   const [dashboardQuery, setDashboardQuery] = useState("");
+  const [dashboardSearchOpen, setDashboardSearchOpen] = useState(false);
   const [activityLogQuery, setActivityLogQuery] = useState("");
   const [userSymbols, setUserSymbols] = useState<UserSymbol[]>(getDefaultSymbols);
   const [isSymbolPickerOpen, setIsSymbolPickerOpen] = useState(false);
@@ -739,6 +753,7 @@ export default function DailyDiary({
   const currentMonth = selectedDate.slice(0, 7);
   const today = toLocalDateString(new Date());
   const symbolPlan = symbolPlanOverride ?? "free";
+  const isPro = symbolPlan === "pro";
   const planLimits = useMemo(
     () => planFeaturesOverride ?? getPlanLimits(symbolPlan),
     [symbolPlan, planFeaturesOverride]
@@ -759,7 +774,7 @@ export default function DailyDiary({
   const canTodoRepeat = planLimits.canTodoRepeat;
   const appLocale = getLocale(isKorean);
   const weekdayLabels = getWeekdayLabels(isKorean);
-  const diaryTabOrder: DiaryTab[] = ["home", "activity", "notes", "todo", "dashboard"];
+  const diaryTabOrder: DiaryTab[] = ["home", "activity", "notes", "todo", "settings"];
   const [tabSwipeOffset, setTabSwipeOffset] = useState(0);
   const tabSwipeStartRef = useRef<{
     startX: number;
@@ -823,7 +838,7 @@ export default function DailyDiary({
     }
 
     const deltaX = state.lastX - state.startX;
-    const currentIndex = diaryTabOrder.indexOf(activeDiaryTab);
+    const currentIndex = diaryTabOrder.indexOf(activeDiaryTab === "dashboard" ? "home" : activeDiaryTab);
     if (currentIndex < 0) {
       setTabSwipeOffset(0);
       return;
@@ -845,6 +860,32 @@ export default function DailyDiary({
 
     window.dispatchEvent(new CustomEvent("diary:active-tab", { detail: { tab: activeDiaryTab } }));
   }, [activeDiaryTab]);
+
+  // 탭 투어 — 온보딩 완료 후 첫 방문 시 자동 실행
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const tryStart = (delay = 800) => {
+      if (hasCompletedTabTour()) return;
+      const timer = setTimeout(() => setShowTabTour(true), delay);
+      return timer;
+    };
+
+    // 이미 온보딩이 끝난 상태라면 바로 시작
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (hasCompletedOnboarding()) {
+      timer = tryStart(800);
+    }
+
+    // 온보딩이 이번 세션에서 방금 완료된 경우 이벤트로 트리거
+    const handleOnboardingDone = () => { timer = tryStart(400); };
+    window.addEventListener("diary:onboarding-done", handleOnboardingDone);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("diary:onboarding-done", handleOnboardingDone);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1838,6 +1879,8 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setTodoError("");
     setIsAddingTodo(true);
     setIsTodoRepeatSettingsOpen(false);
+    setTodoRepeatDays([]);
+    setTodoRepeatPlusDays(TODO_REPEAT_DEFAULT_PLUS_DAYS);
     setEditingTodoId(todo.id);
     setNewTodoTitle(todo.title);
     setTimeout(() => {
@@ -1919,10 +1962,13 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
         return;
       }
 
-      if (title === targetTodo.title) {
+      const repeatDaysForEdit = canTodoRepeat ? todoRepeatDays : [];
+      if (title === targetTodo.title && repeatDaysForEdit.length === 0) {
         setEditingTodoId(null);
         setIsAddingTodo(false);
         setIsTodoRepeatSettingsOpen(false);
+        setTodoRepeatDays([]);
+        setTodoRepeatPlusDays(TODO_REPEAT_DEFAULT_PLUS_DAYS);
         setNewTodoTitle("");
         return;
       }
@@ -2383,6 +2429,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     const cleanLabel = trimActivityLabel(normalizeActivityLabelInput(nextLabel));
     const latestActivity = activities.find((item) => item.emoji === activity.emoji) ?? activity;
     if (trimActivityLabel(latestActivity.label) === cleanLabel) {
+      setActivityLabelDrafts((prev) => {
+        const next = { ...prev };
+        delete next[activity.emoji];
+        return next;
+      });
       setActivityLabelEditingByDate((prev) => {
         const next = { ...prev };
         delete next[activity.emoji];
@@ -2394,6 +2445,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     if (user) {
       void saveActivity(activity.emoji, latestActivity.hours, cleanLabel, latestActivity.startTime ?? "00:00", latestActivity.endTime);
     }
+    setActivityLabelDrafts((prev) => {
+      const next = { ...prev };
+      delete next[activity.emoji];
+      return next;
+    });
     setActivityLabelEditingByDate((prev) => {
       const next = { ...prev };
       delete next[activity.emoji];
@@ -2408,6 +2464,10 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
 
   const startActivityLabelEdit = (activity: UiActivity) => {
     const key = activity.emoji;
+    setActivityLabelDrafts((prev) => ({
+      ...prev,
+      [key]: activity.label
+    }));
     setActivityLabelEditingByDate((prev) => ({
       ...prev,
       [key]: true
@@ -2531,6 +2591,16 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     if (journalError) {
       setJournalError("");
     }
+    // Auto-save draft to localStorage after 1.5s of no typing
+    if (noteAutoSaveTimerRef.current) clearTimeout(noteAutoSaveTimerRef.current);
+    noteAutoSaveTimerRef.current = setTimeout(() => {
+      if (!next.trim()) return;
+      try {
+        localStorage.setItem(NOTE_DRAFT_COMPOSE_KEY, JSON.stringify({ date: selectedDate, text: next }));
+      } catch { /* no-op */ }
+      setNotesAutoSaveStatus("saved");
+      setTimeout(() => setNotesAutoSaveStatus("idle"), 2000);
+    }, 1500);
   };
 
   const saveJournalNote = async () => {
@@ -2541,6 +2611,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     }
 
     if (journalNotes.length >= dailyNoteLimit) {
+      if (!isPro && dailyNoteLimit < proDailyNoteLimit) {
+        setJournalError(t("Upgrade to Pro to save more notes today.", "오늘 노트를 더 저장하려면 Pro로 업그레이드해 주세요."));
+        onRequestProUpgrade?.("notes");
+        return;
+      }
       setJournalError(
         dailyNoteLimit === proDailyNoteLimit
           ? t(
@@ -2573,6 +2648,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
       setJournalNotes(nextNotes);
       setJournalText("");
       setIsJournalDirty(false);
+      try { localStorage.removeItem(NOTE_DRAFT_COMPOSE_KEY); } catch { /* no-op */ }
       showToast(t("Note saved", "노트를 저장했습니다."), "success");
       return;
     }
@@ -2598,6 +2674,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     setJournalNotes(nextNotes);
     setJournalText("");
     setIsJournalDirty(false);
+    try { localStorage.removeItem(NOTE_DRAFT_COMPOSE_KEY); } catch { /* no-op */ }
     showToast(t("Note saved", "노트를 저장했습니다."), "success");
     await loadData(selectedDate);
     await loadMonthFlow(selectedDate);
@@ -2606,6 +2683,23 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   // 날짜 전환 시 편집 상태 초기화 (이전 날짜의 편집 모드가 새 날짜에 남지 않도록)
   useEffect(() => {
     setActivityLabelEditingByDate({});
+    setActivityLabelDrafts({});
+  }, [selectedDate]);
+
+  // 날짜 전환 시 작성 중이던 노트 draft 복원
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(NOTE_DRAFT_COMPOSE_KEY);
+      if (!raw) { setJournalText(""); return; }
+      const { date, text } = JSON.parse(raw) as { date: string; text: string };
+      if (date === selectedDate && text) {
+        setJournalText(text);
+      } else {
+        setJournalText("");
+      }
+    } catch {
+      setJournalText("");
+    }
   }, [selectedDate]);
 
   useEffect(() => {
@@ -2885,25 +2979,32 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
   return (
     <main
       className="flex min-h-screen w-full flex-col pb-20 md:pb-0"
-      style={{ background: "linear-gradient(to bottom, var(--bg-secondary), var(--bg))" }}
+      style={{ background: "linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg) 180px)" }}
     >
       <div className="mx-auto mt-4 w-full max-w-[430px] px-4 sm:mt-5 lg:max-w-5xl">
         <div className="flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={() => setSelectedDate((prev) => shiftDateByDays(prev, -1))}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--bg-secondary)] text-[var(--muted)] transition-all hover:bg-[var(--bg-hover)] hover:text-[var(--ink)] active:scale-90"
             aria-label={t("Previous day", "이전 날짜")}
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <h2 className="text-center text-3xl font-semibold tracking-tight text-[var(--ink)]">
-            {prettyDateLabel(selectedDate, appLocale)}
-          </h2>
+          <div className="flex flex-col items-center gap-1">
+            <h2 className="text-center text-[1.65rem] font-bold tracking-tight text-[var(--ink)]">
+              {prettyDateLabel(selectedDate, appLocale)}
+            </h2>
+            {selectedDate === today && (
+              <span className="rounded-full bg-[var(--primary)]/12 px-2.5 py-0.5 text-[10px] font-semibold text-[var(--primary)]">
+                {t("Today", "오늘")}
+              </span>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setSelectedDate((prev) => shiftDateByDays(prev, 1))}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--bg-secondary)] text-[var(--muted)] transition-all hover:bg-[var(--bg-hover)] hover:text-[var(--ink)] active:scale-90"
             aria-label={t("Next day", "다음 날짜")}
           >
             <ChevronRight className="h-4 w-4" />
@@ -2971,20 +3072,24 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
               </div>
             ) : null}
             <div className="hidden md:inline-flex overflow-hidden rounded-full border border-[var(--border)] bg-[var(--bg)] p-1 shadow-sm backdrop-blur">
-              {diaryTabs.map((tab) => (
+              {primaryTabs.map((tab) => {
+                const isPrimaryActive =
+                  activeDiaryTab === tab.id || (tab.id === "home" && activeDiaryTab === "dashboard");
+                return (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveDiaryTab(tab.id)}
                   className={`rounded-full px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
-                    activeDiaryTab === tab.id
+                    isPrimaryActive
                       ? "bg-[var(--primary)] text-white"
                       : "text-[var(--muted)] hover:bg-[var(--bg-hover)]"
                   }`}
                 >
                   {tab.label}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -3063,17 +3168,23 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     if (!day) return <span key={`blank-${index}`} className="h-10 w-10" />;
                     const isSelected = day === selectedDate;
                     const isToday = day === today;
+                    const hasActivity = (monthActivitiesByDate[day] ?? []).some((a) => a.hours > 0);
+                    const hasNote = Boolean(monthJournalByDate[day]);
+                    const hasRecord = hasActivity || hasNote;
                     return (
                       <button
                         key={day}
                         onClick={() => setSelectedDate(day)}
                         className={[
-                          "n-calendar-day",
+                          "n-calendar-day relative",
                           isSelected ? "n-calendar-day--selected" : "",
                           !isSelected && isToday ? "n-calendar-day--today" : ""
                         ].join(" ")}
                       >
                         {new Date(`${day}T00:00:00`).getDate()}
+                        {hasRecord && !isSelected && (
+                          <span className="absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-[var(--primary)] opacity-70" />
+                        )}
                       </button>
                     );
                   })}
@@ -3089,6 +3200,16 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     </button>
                   </div>
                 ) : null}
+              </div>
+
+              <div className="lg:col-span-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveDiaryTab("dashboard")}
+                  className="flex w-full items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-semibold tracking-[0.14em] text-[var(--ink)] shadow-sm transition-colors hover:bg-[var(--bg-hover)]"
+                >
+                  DASHBOARD
+                </button>
               </div>
             </section>
           ) : null}
@@ -3151,23 +3272,21 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       placeholder={isTodoEditing ? t("Edit task", "할 일 수정") : t("Add a task", "할 일을 입력하세요")}
                       aria-label={t("Todo input", "할 일 입력")}
                     />
-                    {!isTodoEditing ? (
-                      <button
-                        type="button"
-                        onClick={() => setIsTodoRepeatSettingsOpen((prev) => !prev)}
-                        className={`inline-flex h-10 shrink-0 items-center gap-1 rounded-md border px-2 ${
-                          isTodoRepeatSettingsOpen
-                            ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
-                            : "border-[var(--border)] text-[var(--muted)]"
-                        }`}
-                        aria-label={t("Open repeat settings", "반복 설정 열기")}
-                        title={t("Repeat settings", "반복 설정")}
-                      >
-                        <Settings className="h-4 w-4" />
-                        <span className="text-[11px] font-semibold">{t("Repeat", "반복")}</span>
-                        <span className="text-[10px] opacity-80">{todoRepeatSummary}</span>
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setIsTodoRepeatSettingsOpen((prev) => !prev)}
+                      className={`inline-flex h-10 shrink-0 items-center gap-1 rounded-md border px-2 ${
+                        isTodoRepeatSettingsOpen
+                          ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                      aria-label={t("Open repeat settings", "반복 설정 열기")}
+                      title={t("Repeat settings", "반복 설정")}
+                    >
+                      <Settings className="h-4 w-4" />
+                      <span className="text-[11px] font-semibold">{t("Repeat", "반복")}</span>
+                      <span className="text-[10px] opacity-80">{todoRepeatSummary}</span>
+                    </button>
                     <button onClick={() => void addTodo()} className="n-btn-primary shrink-0">
                       {isTodoEditing ? t("Save", "저장") : t("Add", "추가")}
                     </button>
@@ -3185,7 +3304,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       {t("Cancel", "취소")}
                     </button>
                   </div>
-                  {isTodoRepeatSettingsOpen && !isTodoEditing ? (
+                  {isTodoRepeatSettingsOpen ? (
                     <div className="mt-2 rounded-lg border border-[var(--border)] p-2">
                     <p className="mb-1.5 text-xs text-[var(--muted)]">{t("Repeat on", "반복 요일")}</p>
                     <div className="flex flex-wrap gap-1.5">
@@ -3236,27 +3355,61 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   ) : null}
                 </div>
               ) : null}
-              <ul>
-                {todos.length === 0 ? (
-                  <li className="flex flex-col items-center gap-2 px-3 py-8 text-center">
-                    <CheckCircle2 className="h-8 w-8 text-[var(--muted)] opacity-30" />
-                    <p className="text-sm font-medium text-[var(--muted)]">{t("No tasks yet", "아직 할 일이 없습니다")}</p>
-                    <p className="text-xs text-[var(--muted)] opacity-60">{t("Tap + to add your first task for today", "+ 버튼으로 오늘 할 일을 추가해 주세요")}</p>
-                  </li>
-                ) : (
-                  todos.map((todo) => (
-                    <SwipeableTodoItem
-                      key={todo.id}
-                      todo={todo}
-                      onToggle={() => void toggleTodo(todo)}
-                      onEdit={() => void editTodo(todo)}
-                      onDelete={() => void deleteTodo(todo)}
-                      onEditTodoLabel={t("Edit task", "할 일 수정")}
-                      onDeleteTodoLabel={t("Delete task", "할 일 삭제")}
-                    />
-                  ))
-                )}
-              </ul>
+              {(() => {
+                const pendingTodos = todos.filter((t) => !t.done);
+                const doneTodos = todos.filter((t) => t.done);
+                return (
+                  <ul>
+                    {todos.length === 0 ? (
+                      <li className="flex flex-col items-center gap-2 px-3 py-8 text-center">
+                        <CheckCircle2 className="h-8 w-8 text-[var(--muted)] opacity-30" />
+                        <p className="text-sm font-medium text-[var(--muted)]">{t("No tasks yet", "아직 할 일이 없습니다")}</p>
+                        <p className="text-xs text-[var(--muted)] opacity-60">{t("Tap + to add your first task for today", "+ 버튼으로 오늘 할 일을 추가해 주세요")}</p>
+                      </li>
+                    ) : (
+                      <>
+                        {pendingTodos.map((todo) => (
+                          <SwipeableTodoItem
+                            key={todo.id}
+                            todo={todo}
+                            onToggle={() => void toggleTodo(todo)}
+                            onEdit={() => void editTodo(todo)}
+                            onDelete={() => void deleteTodo(todo)}
+                            onEditTodoLabel={t("Edit task", "할 일 수정")}
+                            onDeleteTodoLabel={t("Delete task", "할 일 삭제")}
+                          />
+                        ))}
+                        {doneTodos.length > 0 && (
+                          <>
+                            <li className="border-t border-[var(--border)]">
+                              <button
+                                type="button"
+                                onClick={() => setShowDoneTodos((v) => !v)}
+                                className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--bg-hover)] transition-colors"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5 text-[var(--muted)] opacity-60" />
+                                {t(`Completed ${doneTodos.length}`, `완료 ${doneTodos.length}개`)}
+                                <span className="ml-auto text-[10px]">{showDoneTodos ? "▲" : "▼"}</span>
+                              </button>
+                            </li>
+                            {showDoneTodos && doneTodos.map((todo) => (
+                              <SwipeableTodoItem
+                                key={todo.id}
+                                todo={todo}
+                                onToggle={() => void toggleTodo(todo)}
+                                onEdit={() => void editTodo(todo)}
+                                onDelete={() => void deleteTodo(todo)}
+                                onEditTodoLabel={t("Edit task", "할 일 수정")}
+                                onDeleteTodoLabel={t("Delete task", "할 일 삭제")}
+                              />
+                            ))}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </ul>
+                );
+              })()}
           </section>
           ) : null}
 
@@ -3267,6 +3420,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
         <span className="n-h2">{t("Activity", "활동")}</span>
         {isSavingActivity && (
           <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--muted)]" aria-label={t("Saving", "저장 중")} />
+        )}
+        {activities.length > 0 && (
+          <span className="rounded-full bg-[var(--primary)]/10 px-2 py-0.5 text-[11px] font-semibold text-[var(--primary)]">
+            {t("Total", "합계")} {formatHoursLabel(activities.reduce((sum, a) => sum + a.hours, 0))}
+          </span>
         )}
         <button
           onClick={toggleSymbolPicker}
@@ -3522,18 +3680,29 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                         <div className="px-3 pt-1" style={{ paddingLeft: "2.25rem" }}>
                           {isActivityLabelEditing(activity) ? (
                             <input
-                              value={activity.label}
-                              onChange={(e) => updateActivityLabel(activity.emoji, e.target.value)}
+                              type="text"
+                              value={activityLabelDrafts[activity.emoji] ?? activity.label}
+                              onChange={(e) => {
+                                const nextValue = normalizeActivityLabelInput(e.target.value);
+                                setActivityLabelDrafts((prev) => ({
+                                  ...prev,
+                                  [activity.emoji]: nextValue
+                                }));
+                              }}
                               onBlur={(e) => commitActivityLabel(activity, e.target.value)}
+                              onKeyDownCapture={(event) => event.stopPropagation()}
                               onKeyDown={(e) => {
                                 if (e.nativeEvent.isComposing) return;
                                 if (e.key !== "Enter") return;
                                 e.preventDefault();
                                 commitActivityLabel(activity, e.currentTarget.value);
                               }}
-                                className="n-input text-xs"
+                              className="n-input text-xs"
                               placeholder={t("Write what you did and press Enter", "내용을 입력하고 Enter를 눌러 저장")}
                               aria-label={t("Activity note input", "활동 노트 입력")}
+                              inputMode="text"
+                              autoComplete="off"
+                              spellCheck={false}
                             />
                           ) : (
                             <div
@@ -3634,13 +3803,20 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                     placeholder={t("Write a note for today…", "오늘의 노트를 입력해 주세요…")}
                   />
                   <div className="mt-2 flex items-center justify-between">
-                    <p className={`text-xs ${journalText.length >= NOTE_CHAR_LIMIT ? "text-red-500 font-semibold" : journalText.length >= NOTE_CHAR_LIMIT * 0.9 ? "text-orange-400" : "text-[var(--muted)]"}`}>
-                      {journalText.length.toLocaleString()} / {NOTE_CHAR_LIMIT.toLocaleString()}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className={`text-xs ${journalText.length >= NOTE_CHAR_LIMIT ? "text-red-500 font-semibold" : journalText.length >= NOTE_CHAR_LIMIT * 0.9 ? "text-orange-400" : "text-[var(--muted)]"}`}>
+                        {journalText.length.toLocaleString()} / {NOTE_CHAR_LIMIT.toLocaleString()}
+                      </p>
+                      {notesAutoSaveStatus === "saved" && (
+                        <span className="text-[11px] text-emerald-500 transition-opacity">
+                          ✓ {t("Draft saved", "임시 저장됨")}
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={() => void saveJournalNote()}
-                      disabled={!journalText.trim() || journalNotes.length >= dailyNoteLimit}
+                      disabled={!journalText.trim()}
                       className="inline-flex h-7 items-center rounded-lg bg-blue-50 px-3.5 text-xs font-semibold text-blue-500 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-blue-500/15 dark:text-blue-400 dark:hover:bg-blue-500/25"
                       aria-label={t("Save note", "노트 저장")}
                     >
@@ -3665,15 +3841,49 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           </section>
           ) : null}
 
+          {activeDiaryTab === "settings" ? (
+            <section className="fade-up">
+              {settingsContent}
+            </section>
+          ) : null}
+
           {/* ── Dashboard (daily flow) ── */}
           {activeDiaryTab === "dashboard" ? (
-          <section className="fade-up overflow-hidden rounded-lg border border-[var(--border)]">
-              <div className="flex items-center justify-between gap-1 overflow-hidden px-1 py-1 border-b border-[var(--border)]">
-                <div className="flex min-w-0 items-center gap-1">
+          <section className="fade-up overflow-hidden rounded-2xl border border-[var(--border)] shadow-sm">
+              {/* Row 1: title + week/month toggle */}
+              <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
+                <div className="flex min-w-0 items-center gap-1.5">
                   <p className="n-label truncate text-[10px]">{t("Dashboard", "대시보드")}</p>
                   {monthLoading && <Loader2 className="h-3 w-3 animate-spin text-[var(--muted)]" />}
                 </div>
-                <div className="flex h-7 flex-shrink-0 items-center gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-0.5 py-0.5">
+                <div className="flex h-6 flex-shrink-0 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setDashboardViewModeAndSave("week")}
+                    className={`min-w-[2.15rem] rounded-md px-2 text-center text-[10px] font-semibold leading-4 transition-colors ${
+                      dashboardViewMode === "week"
+                        ? "bg-[var(--primary)] text-white shadow-sm"
+                        : "text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                    }`}
+                  >
+                    {t("Week", "주간")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDashboardViewModeAndSave("month")}
+                    className={`min-w-[2.15rem] rounded-md px-2 text-center text-[10px] font-semibold leading-4 transition-colors ${
+                      dashboardViewMode === "month"
+                        ? "bg-[var(--primary)] text-white shadow-sm"
+                        : "text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                    }`}
+                  >
+                    {t("Month", "월간")}
+                  </button>
+                </div>
+              </div>
+              {/* Row 2: date navigation + search icon */}
+              <div className="flex items-center justify-between border-b border-[var(--border)] px-2 py-1">
+                <div className="flex items-center gap-0.5">
                   <button
                     type="button"
                     onClick={() =>
@@ -3683,12 +3893,12 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           : shiftMonth(currentMonth, -1)
                       )
                     }
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-transparent p-0 text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)]"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)]"
                     aria-label={dashboardViewMode === "week" ? t("Previous week", "이전 주") : t("Previous month", "이전 달")}
                   >
                     <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2.2} />
                   </button>
-                  <span className="min-w-0 max-w-[5.25rem] shrink overflow-hidden truncate px-1 text-center text-[10px] font-semibold leading-4 text-[var(--ink)]">
+                  <span className="min-w-0 max-w-[6rem] shrink overflow-hidden truncate px-1 text-center text-[10px] font-semibold text-[var(--ink)]">
                     {dashboardViewMode === "week" ? weeklyRangeLabel : monthlyRangeLabel}
                   </span>
                   <button
@@ -3700,46 +3910,38 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           : shiftMonth(currentMonth, 1)
                       )
                     }
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-transparent p-0 text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)]"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)]"
                     aria-label={dashboardViewMode === "week" ? t("Next week", "다음 주") : t("Next month", "다음 달")}
                   >
                     <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.2} />
                   </button>
                 </div>
-                <div className="flex h-7 flex-shrink-0 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5">
+                {canSearchSummary ? (
                   <button
                     type="button"
-                    onClick={() => setDashboardViewModeAndSave("week")}
-                    className={`min-w-[2.15rem] rounded-md px-2 py-1 text-center text-[10px] font-semibold leading-4 transition-colors ${
-                      dashboardViewMode === "week"
-                        ? "bg-[var(--primary)] text-white shadow-sm"
-                        : "text-[var(--ink)] hover:bg-[var(--bg-hover)]"
+                    onClick={() => { setDashboardSearchOpen((v) => !v); if (dashboardSearchOpen) setDashboardQuery(""); }}
+                    className={`inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+                      dashboardSearchOpen
+                        ? "bg-[var(--primary)]/10 text-[var(--primary)]"
+                        : "text-[var(--muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink)]"
                     }`}
+                    aria-label={t("Search", "검색")}
                   >
-                    {t("Week", "주간")}
+                    <Search className="h-3.5 w-3.5" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setDashboardViewModeAndSave("month")}
-                    className={`min-w-[2.15rem] rounded-md px-2 py-1 text-center text-[10px] font-semibold leading-4 transition-colors ${
-                      dashboardViewMode === "month"
-                        ? "bg-[var(--primary)] text-white shadow-sm"
-                        : "text-[var(--ink)] hover:bg-[var(--bg-hover)]"
-                    }`}
-                  >
-                    {t("Month", "월간")}
-                  </button>
-                </div>
+                ) : null}
               </div>
-              {canSearchSummary ? (
+              {/* Row 3: search input (expandable) */}
+              {canSearchSummary && dashboardSearchOpen ? (
                 <div className="border-b border-[var(--border)] px-3 py-2">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted)]" />
                     <input
                       value={dashboardQuery}
                       onChange={(e) => setDashboardQuery(e.target.value)}
+                      autoFocus
                       className="n-input w-full pl-8"
-                      placeholder=""
+                      placeholder={t("Search…", "검색…")}
                       aria-label={t("Search summary", "요약 검색")}
                     />
                   </div>
@@ -3791,6 +3993,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       .filter((item) => item.hours > 0)
                       .sort((a, b) => a.emoji.localeCompare(b.emoji));
 
+                    const dayTotalHours = displayActivities.reduce((sum, a) => sum + a.hours, 0);
                     return (
                       <button
                         key={day}
@@ -3801,9 +4004,16 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                           isActive ? "bg-[var(--bg-selected)]" : "bg-transparent"
                         ].join(" ")}
                       >
-                        <p className={`text-xs leading-5 font-medium ${isActive ? "text-[var(--primary)]" : "text-[var(--ink)]"}`}>
-                          {prettyDateLabel(day, appLocale)}
-                        </p>
+                        <div className="flex items-center justify-between">
+                          <p className={`text-xs leading-5 font-medium ${isActive ? "text-[var(--primary)]" : "text-[var(--ink)]"}`}>
+                            {prettyDateLabel(day, appLocale)}
+                          </p>
+                          {dayTotalHours > 0 && (
+                            <span className="text-[11px] font-semibold text-[var(--primary)]">
+                              {formatHoursLabel(dayTotalHours)}
+                            </span>
+                          )}
+                        </div>
 
                         <div className="mt-2">
                           <p className="text-xs leading-5 font-medium text-[var(--ink)]">{t("Summary", "요약")}</p>
@@ -3859,20 +4069,29 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 {filteredSummaryActivities.length === 0 ? (
                   <p className="text-[11px] leading-5 text-[var(--muted)]">{displayedSummaryEmptyText}</p>
                 ) : (
-                  <div className="grid gap-1">
-                    {filteredSummaryActivities.map((item) => (
-                      <div
-                        key={item.emoji}
-                        className="grid min-w-0 items-start gap-2 justify-items-start"
-                        style={{ gridTemplateColumns: "1.25rem minmax(0, 1fr) auto" }}
-                      >
-                        <span className="text-base leading-5">{item.emoji}</span>
-                        <span className="min-w-0 break-words text-[11px] leading-5 text-[var(--muted)]">
-                          {item.label ? `- ${item.label}` : ""}
-                        </span>
-                        <span className="text-left text-[11px] leading-5 text-[var(--ink)] whitespace-nowrap">{formatHoursLabel(item.hours)}</span>
-                      </div>
-                    ))}
+                  <div className="grid gap-2">
+                    {(() => {
+                      const maxHours = Math.max(...filteredSummaryActivities.map((a) => a.hours), 0.01);
+                      return filteredSummaryActivities.map((item) => (
+                        <div key={item.emoji} className="min-w-0">
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-base leading-none">{item.emoji}</span>
+                              {item.label && (
+                                <span className="min-w-0 truncate text-[11px] text-[var(--muted)]">{item.label}</span>
+                              )}
+                            </div>
+                            <span className="shrink-0 text-[11px] font-semibold text-[var(--ink)] whitespace-nowrap">{formatHoursLabel(item.hours)}</span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-[var(--border)]">
+                            <div
+                              className="h-1.5 rounded-full bg-[var(--primary)] opacity-70 transition-all duration-500"
+                              style={{ width: `${Math.round((item.hours / maxHours) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      ));
+                    })()}
                   </div>
                 )}
               </div>
@@ -3904,6 +4123,16 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   </div>
                 </>
               )}
+              <div className="px-3 pb-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveDiaryTab("home")}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--primary-hover)]"
+                >
+                  <House className="h-4 w-4" />
+                  <span>{t("Home", "홈")}</span>
+                </button>
+              </div>
                   </div>
           </section>
           ) : null}
@@ -3924,23 +4153,35 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
         />
       )}
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--border)] bg-[var(--bg)] pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
-        <div className="mx-auto grid h-16 w-full max-w-[430px] grid-cols-4">
-              {diaryTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveDiaryTab(tab.id)}
-                  className={`flex h-full flex-col items-center justify-center gap-0.5 text-[10px] font-semibold tracking-wide transition-colors ${
-                activeDiaryTab === tab.id
-                  ? "text-[var(--primary)]"
-                  : "text-[var(--muted)]"
-              }`}
-            >
-                <tab.icon className="h-4 w-4" strokeWidth={2.1} />
-              <span className="px-1 text-[8px] leading-3 sm:text-[9px] sm:leading-4">{tab.compactLabel ?? tab.label}</span>
-            </button>
-          ))}
+      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--border)] bg-[var(--bg)]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+        <div className="mx-auto grid h-16 w-full max-w-[430px] grid-cols-5">
+          {primaryTabs.map((tab) => {
+            const isActive = activeDiaryTab === tab.id || (tab.id === "home" && activeDiaryTab === "dashboard");
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveDiaryTab(tab.id)}
+                className={`relative flex h-full flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+                  isActive ? "text-[var(--primary)]" : "text-[var(--muted)] hover:text-[var(--ink-light)]"
+                }`}
+              >
+                {/* Active pill indicator at top */}
+                <span
+                  className={`absolute top-0 rounded-b-full bg-[var(--primary)] transition-all duration-300 ${
+                    isActive ? "h-[3px] w-8 opacity-100" : "h-[3px] w-0 opacity-0"
+                  }`}
+                />
+                <tab.icon
+                  className={`transition-all duration-200 ${isActive ? "h-[19px] w-[19px]" : "h-[17px] w-[17px]"}`}
+                  strokeWidth={isActive ? 2.4 : 2}
+                />
+                <span className={`px-1 leading-3 transition-all duration-200 ${isActive ? "text-[9px] font-bold" : "text-[8px] font-medium"} sm:text-[9px] sm:leading-4`}>
+                  {tab.compactLabel ?? tab.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </nav>
 
@@ -3951,6 +4192,18 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
           selectedDate={selectedDate}
           appLanguage={appLanguage}
           onClose={() => setIsStatsOpen(false)}
+        />
+      )}
+
+      {/* 탭 투어 — 첫 방문 시 각 탭 사용법 안내 */}
+      {showTabTour && (
+        <TabTour
+          appLanguage={appLanguage}
+          onTabChange={(tab) => setActiveDiaryTab(tab as DiaryTab)}
+          onComplete={() => {
+            markTabTourDone();
+            setShowTabTour(false);
+          }}
         />
       )}
     </main>

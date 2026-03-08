@@ -31,6 +31,8 @@
    ```bash
    cp .env.example .env.local
    # NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY 입력
+   # NEXT_PUBLIC_REVENUECAT_API_KEY: iOS 구독 결제(RevenueCat Public SDK Key)
+   # NEXT_PUBLIC_WEB_CHECKOUT_URL: 웹 체크아웃을 쓸 때만 선택적으로 설정
 # (권장) NEXT_PUBLIC_ACCOUNT_DELETE_ENDPOINT: 계정 탈퇴 API 엔드포인트
 # (권장) NEXT_PUBLIC_PRIVACY_CONTACT_EMAIL: 탈퇴/개인정보 문의 메일 주소
    ```
@@ -62,7 +64,8 @@
 현재 코드는 PWA 기준입니다. 앱스토어 런칭이 필요하면 `Capacitor` 기반 iOS 래퍼를 붙여 앱 번들로 확장합니다.
 
 ### iOS 앱 빌드 실전 플로우
-1. `NEXT_PUBLIC_APP_URL`을 Vercel 정식 URL로 `.env.local` 또는 CI 환경 변수에 설정
+1. App Store 제출 빌드는 `NEXT_PUBLIC_APP_URL` 없이 진행해 `out/` 번들을 앱에 포함합니다.
+   원격 URL 로딩이 꼭 필요하면 내부 QA 용도로만 `CAPACITOR_USE_REMOTE_SERVER=true`를 함께 설정합니다.
 2. `npm install`
 3. `npm run mobile:bootstrap` 실행
 4. `npm run mobile:add-ios` 실행
@@ -71,7 +74,9 @@
 7. `npm run mobile:open-ios`
 8. Xcode에서 bundle id `com.dailyflow.diary`로 Signing 재확인
 9. 앱 아이콘/런치 스크린, 권한 항목 점검
-10. Archive -> Export -> App Store Connect 업로드
+10. RevenueCat public SDK key, offering, entitlement(`pro`), 월간 상품(`com.dailyflow.diary.pro.monthly`) 연결 확인
+11. 계정 삭제 API(`NEXT_PUBLIC_ACCOUNT_DELETE_ENDPOINT`)가 실제 배포되어 앱 내 삭제 요청이 동작하는지 확인
+12. Archive -> Export -> App Store Connect 업로드
 
 ### 계정 삭제 API 배포 가이드 (Supabase Functions)
 
@@ -93,6 +98,9 @@
 - App Store Connect 메타데이터와 스크린샷
 - 오프라인 안내 문구 한글 노출 확인
 - 푸시/알림 권한 동의 흐름
+- RevenueCat 상품 가격/문구와 앱 내 구독 시트 표기 일치 여부
+- `NEXT_PUBLIC_REVENUECAT_API_KEY` 설정 여부
+- `NEXT_PUBLIC_ACCOUNT_DELETE_ENDPOINT` 연결 여부
 
 ## PWA 출시 체크리스트
 

@@ -101,6 +101,7 @@ export default function SearchModal({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [filterType, setFilterType] = useState<"all" | SearchResult["type"]>("all");
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeSearchRef = useRef(0);
@@ -298,8 +299,11 @@ export default function SearchModal({
     };
   }, []);
 
+  // 타입 필터 적용
+  const filteredResults = filterType === "all" ? results : results.filter((r) => r.type === filterType);
+
   // 날짜별로 그룹화
-  const grouped = results.reduce<Record<string, SearchResult[]>>((acc, item) => {
+  const grouped = filteredResults.reduce<Record<string, SearchResult[]>>((acc, item) => {
     (acc[item.date] ??= []).push(item);
     return acc;
   }, {});
@@ -347,6 +351,34 @@ export default function SearchModal({
             </button>
           </div>
 
+        {/* 타입 필터 탭 */}
+        {query.length >= 2 && results.length > 0 && (
+          <div className="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2 overflow-x-auto">
+            {(["all", "todo", "note", "activity"] as const).map((type) => {
+              const count = type === "all" ? results.length : results.filter((r) => r.type === type).length;
+              if (type !== "all" && count === 0) return null;
+              const label = type === "all" ? t("All", "전체") : TYPE_LABELS[type];
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setFilterType(type)}
+                  className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                    filterType === type
+                      ? "bg-[var(--primary)] text-white"
+                      : "bg-[var(--bg-secondary)] text-[var(--muted)] hover:bg-[var(--bg-hover)]"
+                  }`}
+                >
+                  {label}
+                  <span className={`rounded-full px-1 text-[10px] ${filterType === type ? "bg-white/20" : "bg-[var(--border)]"}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* 결과 영역 */}
         <div className="max-h-[60vh] overflow-y-auto">
           {/* 로딩 */}
@@ -370,10 +402,13 @@ export default function SearchModal({
           )}
 
           {/* 결과 없음 */}
-          {!isLoading && query.length >= 2 && results.length === 0 && (
+          {!isLoading && query.length >= 2 && filteredResults.length === 0 && (
             <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
               <p className="text-sm font-medium text-[var(--muted)]">
-                {t("No results for", "검색 결과가 없습니다:")} &ldquo;{query}&rdquo;
+                {results.length > 0
+                  ? t("No results in this category", "이 카테고리에 결과가 없습니다")
+                  : <>{t("No results for", "검색 결과가 없습니다:")} &ldquo;{query}&rdquo;</>
+                }
               </p>
               <p className="text-xs text-[var(--muted)] opacity-60">{t("Try different keywords", "다른 키워드로 다시 검색해 주세요")}</p>
             </div>

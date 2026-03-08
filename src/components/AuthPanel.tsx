@@ -1,7 +1,7 @@
 "use client";
 
 import { type FormEvent, useEffect, useState } from "react";
-import { Apple, ArrowRight, Chrome, Linkedin, Mail, X } from "lucide-react";
+import { Apple, ArrowRight, Chrome, Mail, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 /** Capacitor iOS 네이티브 환경 여부 감지 */
@@ -21,10 +21,14 @@ const signInWithAppleNative = async (): Promise<void> => {
   const { SignInWithApple } = await import("@capacitor-community/apple-sign-in").catch(() => {
     throw new Error("Apple Sign In plugin is not installed. Run: npm install @capacitor-community/apple-sign-in");
   });
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const redirectURI = supabaseUrl
+    ? `${supabaseUrl}/auth/v1/callback`
+    : `${window.location.origin}/auth/v1/callback`;
 
   const result = await SignInWithApple.authorize({
     clientId: "com.dailyflow.diary",
-    redirectURI: "https://your-supabase-project.supabase.co/auth/v1/callback",
+    redirectURI,
     scopes: "email name",
     state: crypto.randomUUID(),
     nonce: crypto.randomUUID(),
@@ -49,12 +53,11 @@ type Props = {
   appLanguage?: "en" | "ko";
 };
 
-const socialItems = [
-  { key: "google",   label: "Google",   provider: "google",        icon: Chrome,   colorClass: "text-[#4285F4]" },
-  { key: "apple",    label: "Apple",    provider: "apple",          icon: Apple,    colorClass: "text-[var(--ink)]" },
-  { key: "linkedin", label: "LinkedIn", provider: "linkedin_oidc",  icon: Linkedin, colorClass: "text-[#0A66C2]" },
- ] as const;
-type SocialProvider = (typeof socialItems)[number]["provider"];
+const ALL_SOCIAL_ITEMS = [
+  { key: "google", label: "Google", provider: "google", icon: Chrome, colorClass: "text-[#4285F4]" },
+  { key: "apple",  label: "Apple",  provider: "apple",  icon: Apple,  colorClass: "text-[var(--ink)]" },
+] as const;
+type SocialProvider = (typeof ALL_SOCIAL_ITEMS)[number]["provider"];
 
 const mapMagicLinkError = (
   message: string | undefined,
@@ -183,7 +186,7 @@ export default function AuthPanel({
   /* ── full-page (non-compact) wrapper ── */
   if (!compact) {
     return (
-      <div className="mx-auto flex min-h-screen w-full max-w-sm items-center justify-center px-5 py-14">
+      <div className="mx-auto flex min-h-screen w-full max-w-md items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.12),_transparent_35%),radial-gradient(circle_at_bottom,_rgba(245,158,11,0.08),_transparent_28%),linear-gradient(180deg,_#f8fbff_0%,_#f8fafc_48%,_#ffffff_100%)] px-5 py-14">
         <CompactCard
           isSignup={isSignup}
           currentMode={currentMode}
@@ -254,7 +257,7 @@ function CompactCard({
   sendMagicLink, startSocialAuth, onClose,
 }: CardProps) {
   return (
-    <div className="relative w-full max-w-[420px] overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl shadow-black/15">
+    <div className="relative w-full max-w-[400px] overflow-hidden rounded-[32px] border border-[var(--border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.98)_100%)] shadow-2xl shadow-black/10 backdrop-blur-xl dark:bg-[linear-gradient(180deg,rgba(19,23,32,0.96)_0%,rgba(28,33,48,0.98)_100%)] dark:shadow-black/50">
 
       {/* Close button */}
       {onClose && (
@@ -262,43 +265,55 @@ function CompactCard({
           type="button"
           onClick={onClose}
           aria-label={t("Close", "닫기")}
-          className="absolute right-3.5 top-3.5 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/6 text-[var(--ink-light)] transition-colors hover:bg-black/12"
+          className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/8 text-[var(--ink-light)] transition-colors hover:bg-black/14 dark:bg-white/10 dark:hover:bg-white/18"
         >
-          <X className="h-4 w-4" />
+          <X className="h-3.5 w-3.5" />
         </button>
       )}
 
-      {/* ── Top: logo + tab switcher ── */}
-      <div className="bg-gradient-to-b from-blue-50/80 to-transparent px-6 pb-4 pt-7 text-center dark:from-blue-950/30">
-        {/* Logo badge */}
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm shadow-blue-100 ring-1 ring-black/5 dark:bg-zinc-800 dark:shadow-none">
-          <span className="text-xl">📔</span>
-        </div>
+      {/* ── Header ── */}
+      <div className="relative overflow-hidden border-b border-[var(--border)] px-7 pb-6 pt-8 text-center">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.12),_transparent_70%)]" />
 
-        {/* Tab switcher */}
-        <div className="mx-auto mt-3 flex w-fit rounded-full bg-black/6 p-0.5 dark:bg-white/8">
-          {(["login", "signup"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => switchMode(m)}
-              className={`rounded-full px-5 py-1.5 text-sm font-semibold transition-all ${
-                currentMode === m
-                  ? "bg-white text-[var(--ink)] shadow-sm dark:bg-zinc-700 dark:text-white"
-                  : "text-[var(--ink-light)] hover:text-[var(--ink)]"
-              }`}
-            >
-              {m === "login" ? t("Sign in", "로그인") : t("Sign up", "회원가입")}
-            </button>
-          ))}
+        {/* Logo */}
+        <div className="relative mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[22px] bg-gradient-to-br from-blue-500 via-sky-500 to-indigo-600 shadow-lg shadow-blue-500/25">
+          <span className="text-2xl">📔</span>
         </div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">Daily Flow</p>
+        <h2 className="mt-2 text-[17px] font-bold tracking-tight text-[var(--ink)]">
+          {isSignup ? t("Create your account", "계정 만들기") : t("Welcome back", "다시 오셨군요")}
+        </h2>
+        <p className="mx-auto mt-2 max-w-[18rem] text-[12px] leading-5 text-[var(--muted)]">
+          {t(
+            "Use the same calm card language as the diary while keeping authentication lightweight.",
+            "다이어리와 같은 차분한 카드 언어를 유지하면서 인증은 가볍게 처리합니다."
+          )}
+        </p>
+      </div>
+
+      {/* ── Tab switcher ── */}
+      <div className="mx-7 mb-5 mt-5 flex rounded-2xl bg-[var(--bg-secondary)] p-1">
+        {(["login", "signup"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => switchMode(m)}
+            className={`flex-1 rounded-[14px] py-2.5 text-[13px] font-semibold transition-all ${
+              currentMode === m
+                ? "bg-[var(--bg)] text-[var(--ink)] shadow-sm"
+                : "text-[var(--muted)] hover:text-[var(--ink)]"
+            }`}
+          >
+            {m === "login" ? t("Sign in", "로그인") : t("Sign up", "회원가입")}
+          </button>
+        ))}
       </div>
 
       {/* ── Body ── */}
-      <div className="px-6 pb-6 pt-1">
-        {/* Social buttons */}
-        <div className="space-y-2">
-          {socialItems.map((item) => {
+      <div className="px-7 pb-7">
+        {/* Social buttons — side by side */}
+        <div className="grid grid-cols-2 gap-2.5">
+          {ALL_SOCIAL_ITEMS.map((item) => {
             const Icon = item.icon;
             const isSpinning = socialLoadingKey === item.key;
             return (
@@ -307,46 +322,46 @@ function CompactCard({
                 type="button"
                 onClick={() => void startSocialAuth(item.provider, item.key, item.label)}
                 disabled={isLoading || socialLoadingKey !== null}
-                className="flex h-11 w-full items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-12 items-center justify-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] text-[13px] font-medium text-[var(--ink)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isSpinning ? (
-                  <span className="h-4 w-4 flex-shrink-0 animate-spin rounded-full border-2 border-[var(--ink)] border-t-transparent" />
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--ink)] border-t-transparent" />
                 ) : (
-                  <Icon className={`h-[17px] w-[17px] flex-shrink-0 ${item.colorClass}`} />
+                  <Icon className={`h-[18px] w-[18px] ${item.colorClass}`} />
                 )}
-                <span>{`${t("Continue with", "다음으로 계속:")} ${item.label}`}</span>
+                <span>{item.label}</span>
               </button>
             );
           })}
         </div>
 
         {/* Divider */}
-        <div className="my-4 flex items-center gap-3">
+        <div className="my-5 flex items-center gap-3">
           <span className="h-px flex-1 bg-[var(--border)]" />
-          <span className="text-[11px] font-semibold tracking-widest text-[var(--muted)]">{t("OR", "또는")}</span>
+          <span className="text-[11px] font-medium tracking-widest text-[var(--muted)]">{t("OR", "또는")}</span>
           <span className="h-px flex-1 bg-[var(--border)]" />
         </div>
 
         {/* Email form */}
         <form onSubmit={sendMagicLink} className="space-y-2.5">
           <div className="relative">
-            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
+            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-[15px] w-[15px] -translate-y-1/2 text-[var(--muted)]" />
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               type="email"
               autoComplete="email"
-              placeholder={t("Enter your email…", "이메일 주소를 입력해 주세요…")}
+              placeholder={t("Enter your email…", "이메일 주소 입력…")}
               aria-label={t("Email", "이메일")}
-              className="n-input h-11 w-full rounded-2xl border-[var(--border)] bg-[var(--bg-secondary)] text-sm"
-              style={{ paddingLeft: "2.5rem", paddingRight: "1rem" }}
+              className="n-input h-12 w-full rounded-2xl border-[var(--border)] bg-[var(--bg-secondary)] text-[13px] transition-colors focus:border-[var(--primary)]/60"
+              style={{ paddingLeft: "2.4rem", paddingRight: "1rem" }}
             />
           </div>
 
           <button
             type="submit"
             disabled={isLoading}
-            className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-600 text-[13px] font-semibold text-white shadow-md shadow-blue-500/25 transition-all hover:shadow-blue-500/40 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isLoading ? (
               <>
@@ -364,7 +379,7 @@ function CompactCard({
 
         {/* Status message */}
         {(message || error) ? (
-          <p className={`mt-3 rounded-xl px-3 py-2 text-xs leading-relaxed ${
+          <p className={`mt-3.5 rounded-xl px-3.5 py-2.5 text-[12px] leading-relaxed ${
             message
               ? "bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300"
               : "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-300"
@@ -372,7 +387,7 @@ function CompactCard({
             {message || error}
           </p>
         ) : (
-          <p className="mt-3 text-center text-[11px] leading-relaxed text-[var(--muted)]">
+          <p className="mt-3.5 text-center text-[11px] leading-relaxed text-[var(--muted)]">
             {helperCopy}
           </p>
         )}

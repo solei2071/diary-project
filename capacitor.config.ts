@@ -1,13 +1,14 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim();
-const isProductionCapServer = appUrl.length > 0;
+const useRemoteCapServer =
+  process.env.CAPACITOR_USE_REMOTE_SERVER === "true" && appUrl.length > 0;
 
 const config: CapacitorConfig = {
   appId: "com.dailyflow.diary",
   appName: "Daily Flow Diary",
   webDir: "out",
-  ...(isProductionCapServer
+  ...(useRemoteCapServer
     ? {
         server: {
           url: appUrl,

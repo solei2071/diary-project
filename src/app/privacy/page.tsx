@@ -5,6 +5,7 @@ export const metadata = {
 
 export default function PrivacyPage() {
   const lastUpdated = "2026-03-06";
+  const contactEmail = process.env.NEXT_PUBLIC_PRIVACY_CONTACT_EMAIL?.trim() || "privacy@dailyflowdiary.com";
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-14 text-sm leading-relaxed text-gray-800 dark:text-gray-200">
@@ -24,7 +25,7 @@ export default function PrivacyPage() {
         <h2 className="mb-3 text-lg font-semibold">2. Data We Collect</h2>
         <ul className="list-disc space-y-2 pl-5">
           <li>
-            <strong>Account data:</strong> Email address, authentication provider (Google, Apple, LinkedIn),
+            <strong>Account data:</strong> Email address, authentication provider (Google or Apple),
             and a unique user ID — used to link your diary data across devices.
           </li>
           <li>
@@ -80,6 +81,10 @@ export default function PrivacyPage() {
             <strong>Apple App Store</strong> — payment processing for Pro subscriptions on iOS.
             See <a href="https://www.apple.com/legal/privacy/" className="underline" target="_blank" rel="noopener noreferrer">Apple Privacy Policy</a>.
           </li>
+          <li>
+            <strong>RevenueCat</strong> — subscription status and entitlement management for in-app purchases.
+            See <a href="https://www.revenuecat.com/privacy" className="underline" target="_blank" rel="noopener noreferrer">RevenueCat Privacy Policy</a>.
+          </li>
         </ul>
       </section>
 
@@ -114,8 +119,8 @@ export default function PrivacyPage() {
         <p>
           If you have questions or requests regarding your privacy, please contact us at:
           <br />
-          <a href="mailto:privacy@dailyflowdiary.com" className="underline">
-            privacy@dailyflowdiary.com
+          <a href={`mailto:${contactEmail}`} className="underline">
+            {contactEmail}
           </a>
         </p>
       </section>
