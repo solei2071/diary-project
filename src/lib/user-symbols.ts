@@ -19,7 +19,6 @@ export type PlanFeatures = {
   canExport: boolean;
   canSearch: boolean;
   canTemplates: boolean;
-  canTodoRepeat: boolean;
   canAdvancedSummary: boolean;
   labelCharacterLimit: number;
 };
@@ -36,7 +35,6 @@ export const planFeatures: PlanLimits = {
     canExport: false,
     canSearch: false,
     canTemplates: false,
-    canTodoRepeat: false,
     canAdvancedSummary: false,
     labelCharacterLimit: 30
   },
@@ -47,7 +45,6 @@ export const planFeatures: PlanLimits = {
     canExport: true,
     canSearch: true,
     canTemplates: true,
-    canTodoRepeat: true,
     canAdvancedSummary: true,
     labelCharacterLimit: 30
   }

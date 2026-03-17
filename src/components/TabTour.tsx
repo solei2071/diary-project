@@ -56,8 +56,8 @@ const STEPS: {
       ko: "할 일을 추가하고 완료하면 체크하세요. 오른쪽 스와이프로 완료, 왼쪽 스와이프로 삭제할 수 있어요.",
     },
     tip: {
-      en: "Use Repeat to schedule recurring tasks automatically",
-      ko: "반복 설정으로 매주 반복되는 할 일을 자동 예약해요",
+      en: "Add tasks quickly and keep the list focused on today",
+      ko: "할 일을 빠르게 추가하고 오늘 해야 할 일에 집중하세요",
     },
   },
   {

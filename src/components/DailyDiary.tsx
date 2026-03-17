@@ -61,18 +61,7 @@ const initialDate = toLocalDateString(new Date());
 const NOTE_CHAR_LIMIT = 1000;
 const NOTE_DRAFT_COMPOSE_KEY = "diary-note-draft-compose";
 const JOURNAL_NOTES_PREFIX = "journal-notes-v2::";
-const TODO_REPEAT_DEFAULT_PLUS_DAYS = 14;
-const TODO_REPEAT_MAX_PLUS_DAYS = 365;
 const DEFAULT_TEMPLATE_ACTIVITY_HOURS = 1;
-const TODO_REPEAT_DAY_LABELS = [
-  { value: 1, en: "Mon", ko: "월" },
-  { value: 2, en: "Tue", ko: "화" },
-  { value: 3, en: "Wed", ko: "수" },
-  { value: 4, en: "Thu", ko: "목" },
-  { value: 5, en: "Fri", ko: "금" },
-  { value: 6, en: "Sat", ko: "토" },
-  { value: 0, en: "Sun", ko: "일" }
-];
 type AppLanguage = "en" | "ko";
 const APP_LANGUAGE_STORAGE_KEY = "diary-language";
 
@@ -583,6 +572,7 @@ function SwipeableTodoItem({ todo, onToggle, onEdit, onDelete, onEditTodoLabel, 
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        data-disable-tab-swipe="true"
         style={{
           transform: `translateX(${swipeX}px)`,
           transition: isActive ? "none" : "transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)",
@@ -693,9 +683,6 @@ export default function DailyDiary({
   const [customStartTime, setCustomStartTime] = useState("");
   const [activityLabelEditingByDate, setActivityLabelEditingByDate] = useState<Record<string, boolean>>({});
   const [activityLabelDrafts, setActivityLabelDrafts] = useState<Record<string, string>>({});
-  const [todoRepeatDays, setTodoRepeatDays] = useState<number[]>([]);
-  const [todoRepeatPlusDays, setTodoRepeatPlusDays] = useState<number>(TODO_REPEAT_DEFAULT_PLUS_DAYS);
-  const [isTodoRepeatSettingsOpen, setIsTodoRepeatSettingsOpen] = useState(false);
   const [activityConflictWarnings, setActivityConflictWarnings] = useState<Record<string, string>>({});
   const primaryTabs: { id: Exclude<DiaryTab, "dashboard">; label: string; icon: typeof ListTodo; compactLabel?: string }[] = [
     { id: "home", label: t("Home", "홈"), compactLabel: t("Home", "홈"), icon: House },
@@ -775,7 +762,6 @@ export default function DailyDiary({
   }, [symbolPlan, planLimits.symbolLimit]);
   const canSearchSummary = planLimits.canSearch;
   const hasAdvancedSummary = planLimits.canAdvancedSummary;
-  const canTodoRepeat = planLimits.canTodoRepeat;
   const appLocale = getLocale(isKorean);
   const weekdayLabels = getWeekdayLabels(isKorean);
   const diaryTabOrder: DiaryTab[] = ["home", "activity", "notes", "todo", "settings"];
@@ -791,7 +777,7 @@ export default function DailyDiary({
     const el = target as HTMLElement | null;
     if (!el) return false;
     return !el.closest(
-      "input, textarea, button, select, option, [contenteditable='true'], .n-btn-primary, .n-btn-ghost, .n-input, .n-textarea"
+      "input, textarea, select, option, [contenteditable='true'], [data-disable-tab-swipe='true'], .n-input, .n-textarea"
     );
   };
   const handleTabSwipeStart = (event: TouchEvent<HTMLDivElement>) => {
@@ -830,6 +816,9 @@ export default function DailyDiary({
 
     if (!state.isHorizontalSwipe) return;
 
+    if (event.cancelable) {
+      event.preventDefault();
+    }
     state.lastX = clientX;
     setTabSwipeOffset(Math.max(-96, Math.min(96, deltaX)));
   };
@@ -1087,30 +1076,6 @@ export default function DailyDiary({
     const start = formatStartTime(activity.startTime ?? "00:00");
     const end = getEffectiveEndTime(activity);
     return end ? `${start} - ${end}` : start;
-  };
-
-  const buildTodoRepeatDates = (baseDate: string, repeatDays: number[], repeatPlusDays: number) => {
-    if (!baseDate || !repeatDays.length) {
-      return [baseDate];
-    }
-
-    const base = new Date(`${baseDate}T00:00:00`);
-    const days = [...new Set(repeatDays.filter((value) => value >= 0 && value <= 6))];
-    const normalizedPlusDays = Number.isFinite(repeatPlusDays)
-      ? Math.min(TODO_REPEAT_MAX_PLUS_DAYS, Math.max(0, Math.round(repeatPlusDays)))
-      : TODO_REPEAT_DEFAULT_PLUS_DAYS;
-    const generated = new Set<string>();
-
-    for (let dayOffset = 0; dayOffset <= normalizedPlusDays; dayOffset += 1) {
-      const date = new Date(base);
-      date.setDate(base.getDate() + dayOffset);
-      if (days.includes(date.getDay())) {
-        generated.add(toLocalDateString(date));
-      }
-    }
-
-    const nextDates = Array.from(generated).sort();
-    return nextDates.length ? nextDates : [baseDate];
   };
 
 const buildActivityConflictWarnings = useCallback((rows: UiActivity[], isKorean: boolean) => {
@@ -1926,9 +1891,6 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
   const editTodo = (todo: UiTodo) => {
     setTodoError("");
     setIsAddingTodo(true);
-    setIsTodoRepeatSettingsOpen(false);
-    setTodoRepeatDays([]);
-    setTodoRepeatPlusDays(TODO_REPEAT_DEFAULT_PLUS_DAYS);
     setEditingTodoId(todo.id);
     setNewTodoTitle(todo.title);
     setTimeout(() => {
@@ -1983,16 +1945,6 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     }
   };
 
-  /** 새 To-do 즉시 추가 */
-  const toggleTodoRepeatDay = (dayValue: number) => {
-    if (!canTodoRepeat) return;
-    setTodoRepeatDays((prev) => {
-      const exists = prev.includes(dayValue);
-      const next = exists ? prev.filter((value) => value !== dayValue) : [...prev, dayValue];
-      return next.sort((a, b) => a - b);
-    });
-  };
-
   const addTodo = async () => {
     const title = newTodoTitle.trim();
     if (!title) {
@@ -2010,13 +1962,9 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
         return;
       }
 
-      const repeatDaysForEdit = canTodoRepeat ? todoRepeatDays : [];
-      if (title === targetTodo.title && repeatDaysForEdit.length === 0) {
+      if (title === targetTodo.title) {
         setEditingTodoId(null);
         setIsAddingTodo(false);
-        setIsTodoRepeatSettingsOpen(false);
-        setTodoRepeatDays([]);
-        setTodoRepeatPlusDays(TODO_REPEAT_DEFAULT_PLUS_DAYS);
         setNewTodoTitle("");
         return;
       }
@@ -2027,7 +1975,6 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       );
       setTodos(updated);
       setIsAddingTodo(false);
-      setIsTodoRepeatSettingsOpen(false);
       setEditingTodoId(null);
       setNewTodoTitle("");
       setIsTodoDirty(true);
@@ -2065,14 +2012,6 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
       return;
     }
 
-    const normalizedRepeatPlusDays = Number.isFinite(todoRepeatPlusDays)
-      ? Math.min(TODO_REPEAT_MAX_PLUS_DAYS, Math.max(0, Math.round(todoRepeatPlusDays)))
-      : TODO_REPEAT_DEFAULT_PLUS_DAYS;
-    const repeatDays = canTodoRepeat ? todoRepeatDays : [];
-    const repeatDates = repeatDays.length > 0
-      ? buildTodoRepeatDates(selectedDate, repeatDays, normalizedRepeatPlusDays)
-      : [selectedDate];
-
     const currentSelectedTasks = sortTodosForDisplay(todos);
     const baseTodo: UiTodo = {
       id: makeLocalTodoId(),
@@ -2086,91 +2025,19 @@ const normalizeActivitiesByMonth = (rows: DailyActivityRow[]) => {
     setTodos(nextTodos);
     setNewTodoTitle("");
     setIsAddingTodo(false);
-    setIsTodoRepeatSettingsOpen(false);
     setEditingTodoId(null);
     setIsTodoDirty(true);
     showToast(t("Task added", "할 일이 추가되었습니다"), "success");
 
     if (isGuest) {
-      const nextDraft = { ...draftTodosByDate };
-      const uniqueDates = Array.from(new Set(repeatDates)).sort();
-      uniqueDates.forEach((date) => {
-        const nextDateTaskId = makeLocalTodoId();
-        const currentList = [...(nextDraft[date] ?? [])];
-        const exists = currentList.some((item) => item.title === title);
-        if (!exists) {
-          currentList.unshift({
-            id: nextDateTaskId,
-            due_date: date,
-            title,
-            done: false
-          });
-        }
-        nextDraft[date] = sortTodosForDisplay(currentList);
-      });
-
+      const nextDraft = {
+        ...draftTodosByDate,
+        [selectedDate]: nextTodos
+      };
       setDraftTodosByDate(nextDraft);
       try { localStorage.setItem("diary-draft-todos", JSON.stringify(nextDraft)); } catch { /* no-op */ }
       setTodos(nextDraft[selectedDate] ?? []);
       setIsTodoDirty(false);
-      return;
-    }
-
-    if (repeatDates.length > 1) {
-      const conflict = await hasSyncConflictForSave("todo", selectedDate);
-      if (conflict) {
-        setIsTodoDirty(false);
-        return;
-      }
-
-      const existingByDate = new Map<string, Set<string>>();
-      const { data: existingRows, error: existingError } = await supabase
-        .from("todos")
-        .select("due_date,title")
-        .eq("user_id", user.id)
-        .in("due_date", repeatDates);
-
-      if (existingError) {
-        setTodoError(getSafeSupabaseError(existingError.message));
-        await loadData(selectedDate);
-        setIsTodoDirty(false);
-        return;
-      }
-
-      (existingRows ?? []).forEach((row) => {
-        const bucket = existingByDate.get(row.due_date) ?? new Set<string>();
-        bucket.add(row.title);
-        existingByDate.set(row.due_date, bucket);
-      });
-
-      const uniqueDates = Array.from(new Set(repeatDates));
-      const rowsToInsert = uniqueDates
-        .filter((date) => !((existingByDate.get(date) ?? new Set<string>()).has(title)))
-        .map((date) => ({
-          user_id: user.id,
-          due_date: date,
-          title,
-          done: false
-        }));
-
-      if (rowsToInsert.length === 0) {
-        setTodoError("");
-        setIsTodoDirty(false);
-        await loadMonthFlow(selectedDate);
-        return;
-      }
-
-      const { error } = await supabase.from("todos").insert(rowsToInsert);
-      if (error) {
-        setTodoError(getSafeSupabaseError(error.message));
-        await loadData(selectedDate);
-        setIsTodoDirty(false);
-        return;
-      }
-
-      setIsTodoDirty(false);
-      await loadData(selectedDate);
-      await loadMonthFlow(selectedDate);
       return;
     }
 
@@ -2990,14 +2857,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     ? buildSyncConflictMessage(syncConflict.scope, prettyDateLabel(syncConflict.date, appLocale), isKorean)
     : null;
   const isTodoEditing = editingTodoId !== null;
-  const todoRepeatSummary = !canTodoRepeat
-    ? t("Pro only", "Pro 전용")
-    : todoRepeatDays.length === 0
-      ? t("Off", "끔")
-      : `${TODO_REPEAT_DAY_LABELS
-          .filter((entry) => todoRepeatDays.includes(entry.value))
-          .map((entry) => (isKorean ? entry.ko : entry.en))
-          .join(", ")} · +${todoRepeatPlusDays}${t(" days", "일")}`;
 
   const buildPdfTitle = (range: PdfRange) => {
     if (range === "day") return t("Daily Report", "일간 리포트");
@@ -3468,7 +3327,6 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                 onClick={() => {
                   if (isAddingTodo) {
                     setIsAddingTodo(false);
-                    setIsTodoRepeatSettingsOpen(false);
                     if (editingTodoId) {
                       setEditingTodoId(null);
                       setNewTodoTitle("");
@@ -3517,87 +3375,20 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       placeholder={isTodoEditing ? t("Edit task", "할 일 수정") : t("Add a task", "할 일을 입력하세요")}
                       aria-label={t("Todo input", "할 일 입력")}
                     />
-                    <button
-                      type="button"
-                      onClick={() => setIsTodoRepeatSettingsOpen((prev) => !prev)}
-                      className={`inline-flex h-10 shrink-0 items-center gap-1 rounded-md border px-2 ${
-                        isTodoRepeatSettingsOpen
-                          ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
-                          : "border-[var(--border)] text-[var(--muted)]"
-                      }`}
-                      aria-label={t("Open repeat settings", "반복 설정 열기")}
-                      title={t("Repeat settings", "반복 설정")}
-                    >
-                      <Settings className="h-4 w-4" />
-                      <span className="text-[11px] font-semibold">{t("Repeat", "반복")}</span>
-                      <span className="text-[10px] opacity-80">{todoRepeatSummary}</span>
-                    </button>
                     <button onClick={() => void addTodo()} className="n-btn-primary shrink-0">
                       {isTodoEditing ? t("Save", "저장") : t("Add", "추가")}
                     </button>
                     <button
                       onClick={() => {
                         setIsAddingTodo(false);
-                        setIsTodoRepeatSettingsOpen(false);
                         setNewTodoTitle("");
                         setEditingTodoId(null);
-                        setTodoRepeatDays([]);
-                        setTodoRepeatPlusDays(TODO_REPEAT_DEFAULT_PLUS_DAYS);
                       }}
                       className="n-btn-ghost shrink-0"
                     >
                       {t("Cancel", "취소")}
                     </button>
                   </div>
-                  {isTodoRepeatSettingsOpen ? (
-                    <div className="mt-2 rounded-lg border border-[var(--border)] p-2">
-                    <p className="mb-1.5 text-xs text-[var(--muted)]">{t("Repeat on", "반복 요일")}</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {TODO_REPEAT_DAY_LABELS.map((entry) => {
-                        const active = todoRepeatDays.includes(entry.value);
-                        const repeatDayLabel = isKorean ? entry.ko : entry.en;
-                        return (
-                          <button
-                            key={entry.value}
-                            type="button"
-                            onClick={() => toggleTodoRepeatDay(entry.value)}
-                            disabled={!canTodoRepeat}
-                            className={`rounded border px-2 py-1 text-xs ${
-                              active ? "border-[var(--primary)] bg-[var(--primary)]/12 text-[var(--primary)]" : "border-[var(--border)] text-[var(--ink)]"
-                            }`}
-                          >
-                            {repeatDayLabel}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="text-xs text-[var(--muted)]">+</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={TODO_REPEAT_MAX_PLUS_DAYS}
-                        step={1}
-                        value={todoRepeatPlusDays}
-                        onChange={(event) => {
-                          const nextValue = Number(event.target.value);
-                          if (!Number.isFinite(nextValue)) {
-                            setTodoRepeatPlusDays(0);
-                            return;
-                          }
-                          setTodoRepeatPlusDays(Math.min(TODO_REPEAT_MAX_PLUS_DAYS, Math.max(0, Math.round(nextValue))));
-                        }}
-                        disabled={!canTodoRepeat}
-                        className="n-input h-7 w-20 px-2 py-1 text-xs"
-                        aria-label={t("Repeat plus days", "반복 추가 일수")}
-                      />
-                      <span className="text-xs text-[var(--muted)]">{t("days", "일")}</span>
-                    </div>
-                    {!canTodoRepeat ? (
-                      <p className="mt-1 text-xs text-[var(--muted)]">{t("Repeat scheduling is available on Pro.", "반복 설정은 Pro에서 이용 가능합니다.")}</p>
-                    ) : null}
-                    </div>
-                  ) : null}
                 </div>
               ) : null}
               {(() => {
@@ -3840,6 +3631,7 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                       <div
                         key={activity.emoji}
                         className="relative overflow-hidden px-0 py-1.5 cursor-grab active:cursor-grabbing"
+                        data-disable-tab-swipe="true"
                         draggable={!isActivityLabelEditing(activity)}
                         onDragStart={(event) => {
                           handleActivityDragStart();

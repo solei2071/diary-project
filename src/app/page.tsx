@@ -2093,7 +2093,6 @@ export default function Home() {
                     <p>{t("Export", "내보내기")}: {planInfo.features.canExport ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
                     <p>{t("Search", "검색")}: {planInfo.features.canSearch ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
                     <p>{t("Templates", "템플릿")}: {planInfo.features.canTemplates ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
-                    <p>{t("Todo repeat", "할 일 반복")}: {planInfo.features.canTodoRepeat ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
                     <p>{t("Advanced summary", "고급 요약")}: {planInfo.features.canAdvancedSummary ? t("Enabled", "가능") : t("Unavailable", "사용 불가")}</p>
                   </div>
                 </div>

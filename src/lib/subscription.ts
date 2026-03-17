@@ -224,9 +224,6 @@ const applyEntitlements = (plan: UserSymbolPlan, rows: UserEntitlementRow[]) => 
         case "can_templates":
           next.canTemplates = readFeatureBoolean(row);
           break;
-        case "can_todo_repeat":
-          next.canTodoRepeat = readFeatureBoolean(row);
-          break;
         case "can_advanced_summary":
           next.canAdvancedSummary = readFeatureBoolean(row);
           break;

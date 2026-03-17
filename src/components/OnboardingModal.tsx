@@ -2,27 +2,36 @@
  * OnboardingModal — 첫 방문자 앱 소개 화면
  *
  * - localStorage "diary-onboarding-done" 키로 완료 여부 관리
- * - 3단계 슬라이드: 할 일 → 활동 기록 → 노트
- * - 마지막 단계에서 로그인 또는 바로 시작 선택
+ * - 5단계 슬라이드: Home → Activity → Notes → To-do → Setting
+ * - 실제 하단 5탭 구조와 Home 내부 Dashboard 진입 방식을 함께 소개
  */
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion, type PanInfo } from "motion/react";
 import {
+  Bell,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock3,
   FileText,
+  House,
+  LayoutDashboard,
   ListTodo,
+  Palette,
+  Settings,
+  ShieldCheck,
   Sparkles
 } from "lucide-react";
 import { markOnboardingDone } from "@/lib/onboarding";
 
+type AppLanguage = "en" | "ko";
+type StepId = "home" | "activity" | "notes" | "todo" | "settings";
+
 type Step = {
-  id: "todo" | "activity" | "notes";
-  icon: typeof ListTodo;
+  id: StepId;
+  icon: typeof House;
   title: {
     en: string;
     ko: string;
@@ -44,30 +53,47 @@ type Step = {
   glowClass: string;
 };
 
+type PreviewTab = {
+  id: StepId;
+  icon: typeof House;
+  label: {
+    en: string;
+    ko: string;
+  };
+};
+
+const PREVIEW_TABS: PreviewTab[] = [
+  { id: "home", icon: House, label: { en: "Home", ko: "홈" } },
+  { id: "activity", icon: Clock3, label: { en: "Activity", ko: "활동" } },
+  { id: "notes", icon: FileText, label: { en: "Notes", ko: "노트" } },
+  { id: "todo", icon: ListTodo, label: { en: "To-do", ko: "할 일" } },
+  { id: "settings", icon: Settings, label: { en: "Setting", ko: "설정" } }
+];
+
 const STEPS: Step[] = [
   {
-    id: "todo",
-    icon: ListTodo,
-    title: { en: "Track your tasks", ko: "할 일 관리" },
+    id: "home",
+    icon: House,
+    title: { en: "Start from Home", ko: "시작은 Home에서" },
     description: {
-      en: "Add daily to-dos, finish them with a swipe, and keep the day moving without opening extra screens.",
-      ko: "매일 해야 할 일을 빠르게 추가하고, 스와이프로 완료 처리하면서 흐름을 끊지 않고 하루를 관리하세요."
+      en: "The app opens on Home. See today's summary, monthly calendar, and jump into Dashboard from the Home screen.",
+      ko: "앱은 Home에서 시작합니다. 오늘 요약과 월간 캘린더를 보고, Home 화면에서 바로 Dashboard로 들어갈 수 있습니다."
     },
-    hint: { en: "Stay on top of your day", ko: "오늘의 흐름을 놓치지 않기" },
-    eyebrow: { en: "Daily rhythm", ko: "Daily rhythm" },
-    gradient: "from-sky-100 via-white to-cyan-50",
+    hint: { en: "Home is your daily hub", ko: "Home이 하루의 허브입니다" },
+    eyebrow: { en: "Main landing", ko: "Main landing" },
+    gradient: "from-sky-100 via-white to-indigo-50",
     accentClass: "text-sky-700",
     glowClass: "bg-sky-300/25"
   },
   {
     id: "activity",
     icon: Clock3,
-    title: { en: "Log your activities", ko: "활동 기록" },
+    title: { en: "Log time in Activity", ko: "Activity에서 시간 기록" },
     description: {
-      en: "Tap an emoji, adjust time, and see the day take shape. It is fast enough to use between real tasks.",
-      ko: "이모지를 누르고 시간을 조정하면 하루가 바로 정리됩니다. 실제 일상 사이에서도 빠르게 기록할 수 있습니다."
+      en: "Tap symbols, change time quickly, and keep a simple daily activity log without losing momentum.",
+      ko: "심볼을 누르고 시간을 빠르게 조정하면서 흐름을 끊지 않고 활동 기록을 남길 수 있습니다."
     },
-    hint: { en: "See where your time goes", ko: "시간의 흐름을 바로 파악하기" },
+    hint: { en: "Fast enough for real life", ko: "실사용 속도로 바로 기록" },
     eyebrow: { en: "Live tracking", ko: "Live tracking" },
     gradient: "from-emerald-100 via-white to-teal-50",
     accentClass: "text-emerald-700",
@@ -76,29 +102,59 @@ const STEPS: Step[] = [
   {
     id: "notes",
     icon: FileText,
-    title: { en: "Reflect with notes", ko: "노트로 정리하기" },
+    title: { en: "Keep thoughts in Notes", ko: "Notes에 생각 정리" },
     description: {
-      en: "Write thoughts while they are fresh. Notes stay lightweight, readable, and easy to revisit from home.",
-      ko: "생각이 떠오른 순간 바로 적어두세요. 노트는 가볍고 읽기 쉬운 형태로 유지되어 홈에서 다시 보기 쉽습니다."
+      en: "Write freely, let notes auto-save, and keep saved entries readable and easy to remove later.",
+      ko: "자유롭게 쓰고 자동 저장된 노트를 쌓아 두세요. 저장된 내용은 다시 읽거나 지우기도 쉽습니다."
     },
-    hint: { en: "Capture the day clearly", ko: "하루를 또렷하게 남기기" },
-    eyebrow: { en: "Quiet reflection", ko: "Quiet reflection" },
+    hint: { en: "Write first, organize later", ko: "먼저 쓰고 나중에 정리" },
+    eyebrow: { en: "Quiet capture", ko: "Quiet capture" },
     gradient: "from-amber-100 via-white to-rose-50",
     accentClass: "text-amber-700",
     glowClass: "bg-amber-300/25"
+  },
+  {
+    id: "todo",
+    icon: ListTodo,
+    title: { en: "Manage tasks in To-do", ko: "To-do로 할 일 관리" },
+    description: {
+      en: "Add tasks, check them off, and keep the day moving with a dedicated task view.",
+      ko: "할 일을 추가하고 완료 처리하면서 전용 To-do 화면에서 하루의 실행 흐름을 유지할 수 있습니다."
+    },
+    hint: { en: "A clear list for the day", ko: "오늘 해야 할 일을 명확하게" },
+    eyebrow: { en: "Action list", ko: "Action list" },
+    gradient: "from-cyan-100 via-white to-slate-50",
+    accentClass: "text-cyan-700",
+    glowClass: "bg-cyan-300/25"
+  },
+  {
+    id: "settings",
+    icon: Settings,
+    title: { en: "Control everything in Setting", ko: "Setting에서 전체 관리" },
+    description: {
+      en: "Appearance, security, notifications, sync, and account controls now live in the dedicated Setting tab.",
+      ko: "Appearance, 보안, 알림, 동기화, 계정 설정은 이제 전용 Setting 탭에서 관리합니다."
+    },
+    hint: { en: "One place for setup", ko: "설정은 한 탭에서 정리" },
+    eyebrow: { en: "Control center", ko: "Control center" },
+    gradient: "from-violet-100 via-white to-fuchsia-50",
+    accentClass: "text-violet-700",
+    glowClass: "bg-violet-300/25"
   }
 ];
 
 type Props = {
   onComplete: () => void;
   onRequestSignIn: () => void;
-  appLanguage?: "en" | "ko";
+  appLanguage?: AppLanguage;
 };
 
+const useTranslate = (appLanguage: AppLanguage) =>
+  useCallback((en: string, ko: string) => (appLanguage === "ko" ? ko : en), [appLanguage]);
+
 export default function OnboardingModal({ onComplete, onRequestSignIn, appLanguage = "en" }: Props) {
-  const isKorean = appLanguage === "ko";
+  const t = useTranslate(appLanguage);
   const reduceMotion = useReducedMotion();
-  const t = (en: string, ko: string) => (isKorean ? ko : en);
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState<1 | -1>(1);
   const isLast = step === STEPS.length - 1;
@@ -149,20 +205,20 @@ export default function OnboardingModal({ onComplete, onRequestSignIn, appLangua
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [completeOnboarding, goToStep, handleNext, step]);
 
-  if (!current) return null;
-
   const panelTransition = reduceMotion
     ? { duration: 0 }
     : ({ type: "spring", stiffness: 280, damping: 26, mass: 0.9 } as const);
 
-  const handlePreviewDragEnd = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+  const handlePreviewDragEnd = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     if (Math.abs(info.offset.x) < 60) return;
     if (info.offset.x < 0) {
       handleNext();
       return;
     }
     goToStep(step - 1);
-  };
+  }, [goToStep, handleNext, step]);
+
+  if (!current) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/70 px-4 backdrop-blur-md sm:items-center">
@@ -181,10 +237,10 @@ export default function OnboardingModal({ onComplete, onRequestSignIn, appLangua
               <div>
                 <div className={`inline-flex items-center gap-1.5 rounded-full border border-white/70 bg-white/75 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${current.accentClass}`}>
                   <Sparkles className="h-3.5 w-3.5" />
-                  <span>{isKorean ? current.eyebrow.ko : current.eyebrow.en}</span>
+                  <span>{t(current.eyebrow.en, current.eyebrow.ko)}</span>
                 </div>
                 <p className="mt-3 text-xs font-medium text-slate-500">
-                  {t("Swipe or tap to explore", "스와이프하거나 탭해서 살펴보기")}
+                  {t("Swipe or tap to explore the current app structure", "현재 앱 구조를 스와이프하거나 탭해서 살펴보기")}
                 </p>
               </div>
               <button
@@ -201,15 +257,15 @@ export default function OnboardingModal({ onComplete, onRequestSignIn, appLangua
               dragConstraints={{ left: 0, right: 0 }}
               dragElastic={0.18}
               onDragEnd={handlePreviewDragEnd}
-              className="relative min-h-[220px]"
+              className="relative min-h-[310px]"
             >
               <AnimatePresence custom={direction} mode="wait" initial={false}>
                 <motion.div
                   key={current.id}
                   custom={direction}
-                  initial={reduceMotion ? false : { opacity: 0, x: direction > 0 ? 40 : -40, rotate: direction > 0 ? 1.5 : -1.5 }}
+                  initial={reduceMotion ? false : { opacity: 0, x: direction > 0 ? 40 : -40, rotate: direction > 0 ? 1.2 : -1.2 }}
                   animate={{ opacity: 1, x: 0, rotate: 0 }}
-                  exit={reduceMotion ? undefined : { opacity: 0, x: direction > 0 ? -36 : 36, rotate: direction > 0 ? -1 : 1 }}
+                  exit={reduceMotion ? undefined : { opacity: 0, x: direction > 0 ? -36 : 36, rotate: direction > 0 ? -0.8 : 0.8 }}
                   transition={panelTransition}
                 >
                   <StepPreview step={current} appLanguage={appLanguage} />
@@ -220,49 +276,49 @@ export default function OnboardingModal({ onComplete, onRequestSignIn, appLangua
         </div>
 
         <div className="px-6 pb-6 pt-5">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              {STEPS.map((item, index) => {
-                const Icon = item.icon;
-                const active = index === step;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => goToStep(index)}
-                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-all ${
-                      active
-                        ? "border-[var(--primary)] bg-[var(--primary)] text-white shadow-sm"
-                        : "border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--muted)] hover:border-[var(--border-strong)] hover:text-[var(--ink)]"
-                    }`}
-                    aria-label={isKorean ? `${index + 1}단계` : `Step ${index + 1}`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    <span>{index + 1}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-[11px] font-semibold text-[var(--muted)]">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {STEPS.map((item, index) => {
+              const Icon = item.icon;
+              const active = index === step;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => goToStep(index)}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                    active
+                      ? "border-[var(--primary)] bg-[var(--primary)] text-white shadow-sm"
+                      : "border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--muted)] hover:border-[var(--border-strong)] hover:text-[var(--ink)]"
+                  }`}
+                  aria-label={appLanguage === "ko" ? `${index + 1}단계` : `Step ${index + 1}`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{t(item.title.en, item.title.ko)}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[1.45rem] font-black leading-tight text-[var(--ink)]">
+              {t(current.title.en, current.title.ko)}
+            </h2>
+            <p className="shrink-0 text-[11px] font-semibold text-[var(--muted)]">
               {step + 1} / {STEPS.length}
             </p>
           </div>
-
-          <h2 className="text-[1.45rem] font-black leading-tight text-[var(--ink)]">
-            {isKorean ? current.title.ko : current.title.en}
-          </h2>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-            {isKorean ? current.description.ko : current.description.en}
+            {t(current.description.en, current.description.ko)}
           </p>
           <div className="mt-3 inline-flex rounded-full bg-[var(--bg-secondary)] px-3 py-1 text-[11px] font-semibold text-[var(--primary)]">
-            {isKorean ? current.hint.ko : current.hint.en}
+            {t(current.hint.en, current.hint.ko)}
           </div>
 
           {isLast ? (
             <p className="mt-4 text-[11px] leading-5 text-[var(--muted)]">
               {t(
-                "If you continue without sign-in, your data stays on this device only. You can sign in later from Settings.",
-                "로그인 없이 계속하면 데이터는 이 기기에만 저장됩니다. 나중에 설정에서 로그인할 수 있습니다."
+                "If you continue without sign-in, your data stays on this device only. You can sign in later from Setting.",
+                "로그인 없이 계속하면 데이터는 이 기기에만 저장됩니다. 나중에 Setting 탭에서 로그인할 수 있습니다."
               )}
             </p>
           ) : null}
@@ -317,54 +373,299 @@ export default function OnboardingModal({ onComplete, onRequestSignIn, appLangua
   );
 }
 
-function StepPreview({ step, appLanguage }: { step: Step; appLanguage: "en" | "ko" }) {
+function StepPreview({ step, appLanguage }: { step: Step; appLanguage: AppLanguage }) {
   switch (step.id) {
-    case "todo":
-      return <TodoStepPreview appLanguage={appLanguage} />;
+    case "home":
+      return <HomeStepPreview appLanguage={appLanguage} />;
     case "activity":
       return <ActivityStepPreview appLanguage={appLanguage} />;
     case "notes":
       return <NotesStepPreview appLanguage={appLanguage} />;
+    case "todo":
+      return <TodoStepPreview appLanguage={appLanguage} />;
+    case "settings":
+      return <SettingsStepPreview appLanguage={appLanguage} />;
     default:
       return null;
   }
 }
 
-function TodoStepPreview({ appLanguage }: { appLanguage: "en" | "ko" }) {
-  const isKorean = appLanguage === "ko";
-  const t = (en: string, ko: string) => (isKorean ? ko : en);
+function PreviewShell({
+  activeTab,
+  appLanguage,
+  children
+}: {
+  activeTab: StepId;
+  appLanguage: AppLanguage;
+  children: React.ReactNode;
+}) {
+  const t = useTranslate(appLanguage);
 
   return (
-    <div className="relative rounded-[1.75rem] border border-white/70 bg-white/80 p-4 shadow-[0_16px_60px_rgba(148,163,184,0.18)] backdrop-blur">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-500">
-            {t("Today", "Today")}
-          </p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">{t("Morning checklist", "아침 체크리스트")}</p>
+    <div className="overflow-hidden rounded-[1.75rem] border border-white/75 bg-white/85 shadow-[0_16px_60px_rgba(148,163,184,0.18)] backdrop-blur">
+      <div className="border-b border-slate-200/80 px-4 pb-3 pt-4">
+        <div className="flex items-center justify-between text-slate-400">
+          <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="text-center">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+              {t("Daily Flow", "Daily Flow")}
+            </p>
+            <p className="mt-1 text-lg font-black text-slate-950">3/8 (Sun)</p>
+          </div>
+          <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+            <ChevronRight className="h-4 w-4" />
+          </button>
         </div>
+      </div>
+
+      <div className="min-h-[210px] bg-gradient-to-b from-white via-slate-50/80 to-slate-100/70 px-4 py-4">
+        {children}
+      </div>
+
+      <div className="grid grid-cols-5 gap-1 border-t border-slate-200/80 bg-white px-2 py-2">
+        {PREVIEW_TABS.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = tab.id === activeTab;
+          return (
+            <div
+              key={tab.id}
+              className={`flex flex-col items-center gap-1 rounded-2xl px-1 py-2 text-center transition-colors ${
+                isActive ? "bg-[var(--primary)]/10 text-[var(--primary)]" : "text-slate-400"
+              }`}
+            >
+              <Icon className={`h-4 w-4 ${isActive ? "scale-110" : ""}`} />
+              <span className="text-[9px] font-semibold">
+                {t(tab.label.en, tab.label.ko)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function HomeStepPreview({ appLanguage }: { appLanguage: AppLanguage }) {
+  const t = useTranslate(appLanguage);
+
+  return (
+    <PreviewShell activeTab="home" appLanguage={appLanguage}>
+      <div className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <MiniCard title={t("Today's activity summary", "오늘의 활동 요약")}>
+            <p className="text-[11px] leading-5 text-slate-700">{t("No records yet", "아직 기록이 없습니다.")}</p>
+          </MiniCard>
+          <MiniCard title={t("Notes", "노트")}>
+            <p className="text-[11px] leading-5 text-slate-700">{t("No notes yet.", "아직 노트가 없습니다.")}</p>
+          </MiniCard>
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-white/90 p-3 shadow-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-slate-500">March 2026</span>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+              {t("Calendar", "캘린더")}
+            </span>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-400">
+            {["S", "M", "T", "W", "T", "F", "S"].map((day) => <span key={day}>{day}</span>)}
+          </div>
+          <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px]">
+            {["1", "2", "3", "4", "5", "6", "7"].map((day) => (
+              <span key={day} className="py-1 text-slate-500">{day}</span>
+            ))}
+            <span className="rounded-full bg-slate-950 py-1 text-white">8</span>
+            {["9", "10", "11", "12", "13", "14"].map((day) => (
+              <span key={day} className="py-1 text-slate-500">{day}</span>
+            ))}
+          </div>
+        </div>
+
         <motion.div
-          initial={{ scale: 0.95, opacity: 0.6 }}
-          animate={{ scale: [0.95, 1, 0.95], opacity: [0.7, 1, 0.7] }}
-          transition={{ repeat: Infinity, duration: 2.6, ease: "easeInOut" }}
-          className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-700"
+          initial={{ scale: 0.98 }}
+          animate={{ scale: [0.98, 1, 0.98], boxShadow: ["0 10px 24px rgba(59,130,246,0.12)", "0 16px 32px rgba(59,130,246,0.22)", "0 10px 24px rgba(59,130,246,0.12)"] }}
+          transition={{ repeat: Infinity, duration: 2.8, ease: "easeInOut" }}
+          className="rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-3 text-white"
         >
-          {t("Swipe done", "스와이프 완료")}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-100">
+                {t("Home action", "Home action")}
+              </p>
+              <p className="mt-1 text-sm font-bold">
+                {t("Dashboard opens from Home", "Dashboard는 Home에서 열립니다")}
+              </p>
+            </div>
+            <LayoutDashboard className="h-5 w-5 shrink-0" />
+          </div>
+          <p className="mt-2 text-[11px] text-sky-100">DASHBOARD</p>
         </motion.div>
       </div>
-      <div className="space-y-2.5">
-        <TodoPreviewRow label={t("Review priorities", "우선순위 정리")} done />
-        <TodoPreviewRow label={t("Plan workout", "운동 계획 세우기")} />
-        <TodoPreviewRow label={t("Reply to messages", "메시지 답장하기")} />
+    </PreviewShell>
+  );
+}
+
+function ActivityStepPreview({ appLanguage }: { appLanguage: AppLanguage }) {
+  const t = useTranslate(appLanguage);
+
+  return (
+    <PreviewShell activeTab="activity" appLanguage={appLanguage}>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-slate-900">{t("Activity", "활동")}</p>
+          <div className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">
+            {t("30m step", "30분 단위")}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-400">
+          {t("Filter activity log", "활동 로그 필터")}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {["💻", "🏃", "📚", "☕", "🧘"].map((emoji, index) => (
+            <motion.div
+              key={emoji}
+              animate={index === 0 ? { y: [0, -4, 0] } : undefined}
+              transition={{ repeat: Infinity, duration: 2.1, ease: "easeInOut", delay: index * 0.08 }}
+              className={`rounded-2xl border px-3 py-2 text-lg ${
+                index === 0 ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"
+              }`}
+            >
+              {emoji}
+            </motion.div>
+          ))}
+        </div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">💻</span>
+            <span className="text-sm font-bold text-slate-900">2h</span>
+            <div className="ml-auto rounded-xl border border-slate-200 px-2 py-1 text-[11px] text-slate-600">09:00</div>
+            <span className="text-xs text-slate-400">-</span>
+            <div className="rounded-xl border border-slate-200 px-2 py-1 text-[11px] text-slate-600">11:00</div>
+          </div>
+          <motion.p
+            initial={{ opacity: 0.7 }}
+            animate={{ opacity: [0.6, 1, 0.6] }}
+            transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
+            className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700"
+          >
+            {t("Focus work sprint", "집중 작업 스프린트")}
+          </motion.p>
+        </div>
       </div>
-      <motion.div
-        initial={{ x: -8, opacity: 0 }}
-        animate={{ x: [0, 22, 0], opacity: [0, 1, 0] }}
-        transition={{ repeat: Infinity, duration: 2.4, ease: "easeInOut" }}
-        className="pointer-events-none absolute bottom-4 right-5 rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white shadow-lg"
-      >
-        {t("Done", "완료")}
-      </motion.div>
+    </PreviewShell>
+  );
+}
+
+function NotesStepPreview({ appLanguage }: { appLanguage: AppLanguage }) {
+  const t = useTranslate(appLanguage);
+
+  return (
+    <PreviewShell activeTab="notes" appLanguage={appLanguage}>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-slate-900">{t("Notes", "노트")}</p>
+          <div className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+            {t("Auto-saved", "자동 저장")}
+          </div>
+        </div>
+        <div className="rounded-3xl border border-amber-100 bg-white p-3 shadow-sm">
+          <div className="min-h-[92px] rounded-2xl bg-amber-50/70 px-3 py-3 text-[11px] leading-5 text-slate-600">
+            {t(
+              "Today felt calmer after simplifying the plan. Keep the evening open for reading.",
+              "오늘은 계획을 단순하게 하니 훨씬 차분했다. 저녁은 독서 시간으로 비워두자."
+            )}
+          </div>
+          <div className="mt-3 flex justify-between text-[10px] text-slate-400">
+            <span>84 / 1,000</span>
+            <span>{t("Saved note", "저장된 노트")}</span>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm">
+          <p className="text-[11px] leading-5 text-slate-700">
+            {t("Today felt calmer after simplifying the plan.", "오늘은 계획을 단순하게 하니 훨씬 차분했다.")}
+          </p>
+          <div className="mt-3 flex justify-end">
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-semibold text-rose-500">
+              {t("Delete", "삭제")}
+            </div>
+          </div>
+        </div>
+      </div>
+    </PreviewShell>
+  );
+}
+
+function TodoStepPreview({ appLanguage }: { appLanguage: AppLanguage }) {
+  const t = useTranslate(appLanguage);
+
+  return (
+    <PreviewShell activeTab="todo" appLanguage={appLanguage}>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-slate-900">{t("To-do", "할 일")}</p>
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-sm text-white">+</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-400">
+          {t("Add a task", "할 일을 입력하세요")}
+        </div>
+        <div className="space-y-2">
+          <TodoPreviewRow label={t("Plan workout", "운동 계획 세우기")} done />
+          <TodoPreviewRow label={t("Reply to messages", "메시지 답장하기")} />
+          <TodoPreviewRow label={t("Review priorities", "우선순위 정리")} />
+        </div>
+      </div>
+    </PreviewShell>
+  );
+}
+
+function SettingsStepPreview({ appLanguage }: { appLanguage: AppLanguage }) {
+  const t = useTranslate(appLanguage);
+
+  return (
+    <PreviewShell activeTab="settings" appLanguage={appLanguage}>
+      <div className="space-y-3">
+        <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-900">{t("Setting", "설정")}</p>
+            <span className="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700">
+              {t("Control center", "관리 센터")}
+            </span>
+          </div>
+          <div className="space-y-2">
+            <SettingsPreviewRow
+              icon={<Sparkles className="h-3.5 w-3.5 text-violet-600" />}
+              title={t("Plan", "플랜")}
+              subtitle={t("Upgrade or manage subscription", "업그레이드 및 구독 관리")}
+            />
+            <SettingsPreviewRow
+              icon={<Palette className="h-3.5 w-3.5 text-sky-600" />}
+              title={t("Appearance", "Appearance")}
+              subtitle={t("Round, Clean, Bold fonts", "Round, Clean, Bold 폰트")}
+            />
+            <SettingsPreviewRow
+              icon={<Bell className="h-3.5 w-3.5 text-amber-600" />}
+              title={t("Notifications", "Notifications")}
+              subtitle={t("Daily reminder settings", "일일 리마인더 설정")}
+            />
+            <SettingsPreviewRow
+              icon={<ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />}
+              title={t("Security", "Security")}
+              subtitle={t("PIN, biometric, app lock", "PIN, 생체 인증, 앱 잠금")}
+            />
+          </div>
+        </div>
+      </div>
+    </PreviewShell>
+  );
+}
+
+function MiniCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white/90 p-3 shadow-sm">
+      <p className="mb-1 text-[11px] font-semibold text-slate-500">{title}</p>
+      {children}
     </div>
   );
 }
@@ -393,133 +694,25 @@ function TodoPreviewRow({ label, done = false }: { label: string; done?: boolean
   );
 }
 
-function ActivityStepPreview({ appLanguage }: { appLanguage: "en" | "ko" }) {
-  const isKorean = appLanguage === "ko";
-  const t = (en: string, ko: string) => (isKorean ? ko : en);
-  const chips = [
-    { emoji: "💻", label: t("Deep work", "집중 작업"), width: "72%" },
-    { emoji: "🏃", label: t("Workout", "운동"), width: "48%" },
-    { emoji: "📚", label: t("Reading", "독서"), width: "36%" }
-  ];
-
+function SettingsPreviewRow({
+  icon,
+  title,
+  subtitle
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+}) {
   return (
-    <div className="grid gap-3">
-      <div className="rounded-[1.75rem] border border-white/70 bg-white/80 p-4 shadow-[0_16px_60px_rgba(16,185,129,0.14)] backdrop-blur">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-600">
-              {t("Live activity log", "실시간 활동 로그")}
-            </p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">{t("Tap a symbol and adjust time", "이모지를 누르고 시간을 조정하세요")}</p>
-          </div>
-          <motion.div
-            animate={{ rotate: [0, -10, 10, 0] }}
-            transition={{ repeat: Infinity, duration: 2.8, ease: "easeInOut" }}
-            className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-2xl"
-          >
-            ⏱
-          </motion.div>
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {["💻", "🏃", "📚", "☕"].map((emoji, index) => (
-            <motion.button
-              key={emoji}
-              type="button"
-              initial={false}
-              animate={{
-                y: index === 0 ? [0, -4, 0] : 0,
-                boxShadow: index === 0 ? ["0 0 0 rgba(16,185,129,0)", "0 10px 24px rgba(16,185,129,0.25)", "0 0 0 rgba(16,185,129,0)"] : undefined
-              }}
-              transition={{ repeat: Infinity, duration: 2.4, ease: "easeInOut", delay: index * 0.12 }}
-              className={`rounded-2xl border px-3 py-2 text-xl ${
-                index === 0
-                  ? "border-emerald-300 bg-emerald-50"
-                  : "border-slate-200 bg-white"
-              }`}
-            >
-              {emoji}
-            </motion.button>
-          ))}
-        </div>
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/85 px-3 py-3">
+      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white shadow-sm">
+        {icon}
       </div>
-
-      <div className="rounded-[1.5rem] border border-white/70 bg-slate-950 px-4 py-3 text-white shadow-[0_14px_36px_rgba(15,23,42,0.22)]">
-        <div className="mb-2 flex items-center justify-between text-[11px] text-white/70">
-          <span>{t("Today's flow", "오늘의 흐름")}</span>
-          <span>{t("Auto summary", "자동 요약")}</span>
-        </div>
-        <div className="space-y-2">
-          {chips.map((chip, index) => (
-            <div key={chip.label}>
-              <div className="mb-1 flex items-center justify-between text-[12px]">
-                <span className="flex items-center gap-2">
-                  <span className="text-base">{chip.emoji}</span>
-                  <span>{chip.label}</span>
-                </span>
-                <span className="text-white/60">{index + 1}h</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                <motion.div
-                  initial={{ width: "0%" }}
-                  animate={{ width: chip.width }}
-                  transition={{ duration: 0.9, delay: 0.15 + index * 0.18, ease: "easeOut" }}
-                  className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-300"
-                />
-              </div>
-            </div>
-          ))}
-        </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-slate-900">{title}</p>
+        <p className="text-[11px] leading-5 text-slate-500">{subtitle}</p>
       </div>
-    </div>
-  );
-}
-
-function NotesStepPreview({ appLanguage }: { appLanguage: "en" | "ko" }) {
-  const isKorean = appLanguage === "ko";
-  const t = (en: string, ko: string) => (isKorean ? ko : en);
-  const lines = [
-    t("Today felt calmer after I simplified the plan.", "오늘은 계획을 단순하게 하니 훨씬 차분했다."),
-    t("The workout was short, but it reset my head.", "운동은 짧았지만 머리를 다시 정리해 줬다."),
-    t("Keep the evening clear for reading.", "저녁은 독서 시간으로 비워두자.")
-  ];
-
-  return (
-    <div className="rounded-[1.75rem] border border-white/70 bg-white/85 p-4 shadow-[0_16px_60px_rgba(245,158,11,0.14)] backdrop-blur">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-600">
-            {t("Quick note", "빠른 노트")}
-          </p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">{t("Write while the day is still fresh", "하루의 감각이 남아 있을 때 바로 기록")}</p>
-        </div>
-        <div className="rounded-2xl bg-amber-100 px-3 py-1.5 text-[11px] font-semibold text-amber-700">
-          {t("Auto-saved", "자동 저장")}
-        </div>
-      </div>
-      <div className="rounded-[1.5rem] border border-amber-100 bg-gradient-to-b from-white to-amber-50/80 p-4">
-        <div className="space-y-2">
-          {lines.map((line, index) => (
-            <motion.div
-              key={line}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 + index * 0.16, duration: 0.45 }}
-              className="overflow-hidden rounded-xl border border-amber-100/80 bg-white/90 px-3 py-2"
-            >
-              <p className="text-xs leading-5 text-slate-700">{line}</p>
-            </motion.div>
-          ))}
-        </div>
-        <motion.div
-          initial={{ opacity: 0.4 }}
-          animate={{ opacity: [0.3, 1, 0.3] }}
-          transition={{ repeat: Infinity, duration: 1.4, ease: "easeInOut" }}
-          className="mt-3 inline-flex items-center gap-1 rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white"
-        >
-          <span>{t("Writing", "작성 중")}</span>
-          <span className="h-2 w-1 rounded-full bg-white" />
-        </motion.div>
-      </div>
+      <ChevronRight className="h-4 w-4 text-slate-300" />
     </div>
   );
 }
