@@ -8,15 +8,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 // 환경변수에서 Supabase URL과 익명 키 로드 (브라우저에서도 사용하므로 NEXT_PUBLIC_)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-// 환경변수가 없으면 앱 시작 시점에 에러 throw (빌드/실행 실패로 빠른 피드백)
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Supabase 환경변수 NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY 가 필요합니다."
-  );
-}
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
 // 싱글톤 패턴: 클라이언트를 한 번만 생성하고 재사용 (메모리 절약, 연결 풀 관리)
 let client: SupabaseClient | null = null;
@@ -24,6 +17,11 @@ let client: SupabaseClient | null = null;
 /** Supabase 클라이언트 인스턴스를 반환. 없으면 생성 후 반환 */
 export const getSupabase = (): SupabaseClient => {
   if (!client) {
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error(
+        "Supabase 환경변수 NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY 가 필요합니다."
+      );
+    }
     client = createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         persistSession: true, // 로컬스토리지에 세션 유지
@@ -36,5 +34,5 @@ export const getSupabase = (): SupabaseClient => {
   return client;
 };
 
-// 앱 전역에서 import해서 사용할 기본 인스턴스
-export const supabase = getSupabase();
+// 앱 전역에서 import해서 사용할 기본 인스턴스 (lazy — 빌드 시 throw 방지)
+export const supabase = typeof window !== "undefined" ? getSupabase() : (null as unknown as SupabaseClient);

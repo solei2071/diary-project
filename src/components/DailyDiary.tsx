@@ -2517,7 +2517,18 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
     setActivityContextMenu(null);
   };
 
+  /** 무료 유저가 노트 한도에 도달한 상태에서 새 노트를 작성하려는지 확인 */
+  const shouldBlockNewNote = useCallback(() => {
+    const isNewNote = activeJournalNoteIndex === null;
+    return isNewNote && journalNotes.length >= dailyNoteLimit && !isPro && dailyNoteLimit < proDailyNoteLimit;
+  }, [activeJournalNoteIndex, journalNotes.length, dailyNoteLimit, isPro, proDailyNoteLimit]);
+
   const handleJournalChange = (value: string) => {
+    // 새 노트 작성 시도 시 구독 팝업 표시
+    if (shouldBlockNewNote() && value.trim().length > 0) {
+      onRequestProUpgrade?.("notes");
+      return;
+    }
     const next = value.slice(0, NOTE_CHAR_LIMIT);
     setJournalText(next);
     if (journalError) {
@@ -3844,6 +3855,11 @@ const updateActivity = (emoji: string, nextHours: number, nextLabel?: string, ne
                   <textarea
                     value={journalText}
                     onChange={(e) => handleJournalChange(e.target.value)}
+                    onFocus={() => {
+                      if (shouldBlockNewNote()) {
+                        onRequestProUpgrade?.("notes");
+                      }
+                    }}
                     onKeyDown={(event) => {
                       if (!(event.metaKey || event.ctrlKey) || event.key !== "Enter") return;
                       event.preventDefault();

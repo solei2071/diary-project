@@ -470,7 +470,7 @@ function HomeStepPreview({ appLanguage }: { appLanguage: AppLanguage }) {
             </span>
           </div>
           <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-400">
-            {["S", "M", "T", "W", "T", "F", "S"].map((day) => <span key={day}>{day}</span>)}
+            {["S", "M", "T", "W", "T", "F", "S"].map((day, i) => <span key={i}>{day}</span>)}
           </div>
           <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px]">
             {["1", "2", "3", "4", "5", "6", "7"].map((day) => (
